@@ -1,11 +1,11 @@
 {
-  "name": "webdav-backup",
-  "version": "0.3.1",
-  "description": "A simple, fast, and efficient tool for backing up files to a WebDAV server",
+  "name": "internxt-backup",
+  "version": "0.4.0",
+  "description": "A simple, fast, and efficient tool for backing up files to Internxt Drive",
   "type": "module",
   "main": "index.ts",
   "bin": {
-    "webdav-backup": "./dist/bin/index.js"
+    "internxt-backup": "./dist/bin/index.js"
   },
   "scripts": {
     "start": "bun index.ts",
@@ -23,13 +23,14 @@
     "README.md"
   ],
   "keywords": [
-    "webdav",
+    "internxt",
     "upload",
     "file-transfer",
     "cli",
     "backup",
     "cloud-storage",
-    "file-sync"
+    "file-sync",
+    "encryption"
   ],
   "author": "ngarate",
   "license": "MIT",
@@ -40,6 +41,6 @@
   },
   "dependencies": {
     "chalk": "^5.4.1",
-    "webdav": "^5.8.0"
+    "croner": "^9.0.0"
   }
 }

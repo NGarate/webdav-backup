@@ -1,18 +1,16 @@
 #!/usr/bin/env bun
 
 /**
- * webdav-backup CLI
- * A simple, fast CLI for backing up files to WebDAV servers
+ * internxt-backup CLI
+ * A simple, fast CLI for backing up files to Internxt Drive
  */
 
 import { parseArgs } from "node:util";
-import { join } from "node:path";
 import chalk from "chalk";
 
 // Import the syncFiles function
-// In a development environment, Bun transpiles this directly
-// In production, it's bundled correctly by the bun build command
 import { syncFiles, SyncOptions } from "./src/file-sync";
+import { BackupScheduler } from "./src/core/scheduler/scheduler";
 
 // Get version from package.json using Bun's built-in functionality
 const packageJson = await Bun.file("package.json").json();
@@ -24,14 +22,26 @@ function parse() {
     args: Bun.argv.slice(2),
     options: {
       // Core options
-      "cores": { type: "string" },
+      "source": { type: "string" },
       "target": { type: "string" },
+      "cores": { type: "string" },
+      "compress": { type: "boolean" },
+      "compression-level": { type: "string" },
+
+      // Scheduling
+      "schedule": { type: "string" },
+      "daemon": { type: "boolean" },
+
+      // Behavior
+      "force": { type: "boolean" },
+      "resume": { type: "boolean" },
+      "chunk-size": { type: "string" },
+
+      // Output
       "quiet": { type: "boolean" },
       "verbose": { type: "boolean" },
-      "force": { type: "boolean" },
-      "webdav-url": { type: "string" },
-      
-      // Help and version
+
+      // Help
       "help": { type: "boolean", short: "h" },
       "version": { type: "boolean", short: "v" }
     },
@@ -40,39 +50,45 @@ function parse() {
 
   return {
     ...values,
-    sourceDir: positionals[0]
+    sourceDir: positionals[0] || values.source
   };
 }
 
 // Display help information
-function showHelp() {  
+function showHelp() {
   console.log(`
-${chalk.bold(`WebDAV Backup v${VERSION} - A simple CLI for backing up files to WebDAV servers`)}
+${chalk.bold(`Internxt Backup v${VERSION} - A simple CLI for backing up files to Internxt Drive`)}
 
-${chalk.bold(`Usage: webdav-backup <source-dir> [options]`)}
+${chalk.bold(`Usage: internxt-backup <source-dir> [options]`)})
 
 ${chalk.bold("Options:")}
-  --cores=<number>   Number of concurrent uploads (default: 2/3 of CPU cores)
-  --target=<path>    Target directory on the WebDAV server (default: root directory)
-  --quiet            Show minimal output (only errors and the progress bar)
-  --verbose          Show detailed output including per-file operations
-  --force            Force upload all files regardless of whether they've changed
-  --webdav-url=<url> WebDAV server URL (required)
-  --help, -h         Show this help message
-  --version, -v      Show version information
+  --source=<path>         Source directory to backup (can also be positional)
+  --target=<path>         Target folder in Internxt Drive (default: root)
+  --cores=<number>        Number of concurrent uploads (default: 2/3 of CPU cores)
+  --compress              Enable gzip compression before upload
+  --compression-level=<1-9> Compression level 1-9 (default: 6)
+  --schedule=<cron>       Cron expression for scheduled backups (e.g., "0 2 * * *")
+  --daemon                Run as a daemon with scheduled backups
+  --force                 Force upload all files regardless of hash cache
+  --resume                Enable resume capability for large files
+  --chunk-size=<mb>       Chunk size in MB for large files (default: 50)
+  --quiet                 Show minimal output (only errors and progress)
+  --verbose               Show detailed output including per-file operations
+  --help, -h              Show this help message
+  --version, -v           Show version information
 
 ${chalk.bold("Examples:")}
-  webdav-backup /path/to/files --webdav-url=https://example.com/webdav
-  webdav-backup /path/to/files --cores=4 --webdav-url=https://example.com/webdav
-  webdav-backup /path/to/files --target=backup/daily --webdav-url=https://example.com/webdav
-  webdav-backup /path/to/files --quiet --webdav-url=https://example.com/webdav
-  webdav-backup /path/to/files --force --webdav-url=https://example.com/webdav
+  internxt-backup /mnt/disk/Photos --target=/Backups/Photos
+  internxt-backup /mnt/disk/Documents --target=/Backups/Docs --compress
+  internxt-backup /mnt/disk/Important --target=/Backups --schedule="0 2 * * *" --daemon
+  internxt-backup /mnt/disk/Photos --target=/Backups/Photos --force
+  internxt-backup /mnt/disk/Photos --target=/Backups/Photos --cores=2 --resume
 `);
 }
 
 // Show version information
 function showVersion() {
-  console.log(`webdav-backup v${VERSION}`);
+  console.log(`internxt-backup v${VERSION}`);
 }
 
 // Main function
@@ -80,28 +96,28 @@ async function main() {
   try {
     // Check if help or version flags are present before parsing other arguments
     const rawArgs = Bun.argv.slice(2);
-    
+
     // Check for help flag first
     if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
       showHelp();
       process.exit(0);
     }
-    
+
     // Check for version flag
     if (rawArgs.includes("--version") || rawArgs.includes("-v")) {
       showVersion();
       process.exit(0);
     }
-    
+
     // Show help when no arguments are provided
     if (rawArgs.length === 0) {
       showHelp();
       process.exit(0);
     }
-    
+
     // Parse CLI arguments
     const args = parse();
-    
+
     // Check for required source directory
     if (!args.sourceDir) {
       console.error(chalk.red("Error: Source directory is required"));
@@ -109,25 +125,35 @@ async function main() {
       showHelp();
       process.exit(1);
     }
-    
-    // Check for required webdav-url
-    if (!args["webdav-url"]) {
-      console.error(chalk.red("Error: --webdav-url is required"));
-      console.log();
-      showHelp();
-      process.exit(1);
-    }
-    
-    // Run the main sync function with the parsed arguments
-    await syncFiles(args.sourceDir, {
+
+    // Build sync options
+    const syncOptions: SyncOptions = {
       cores: args.cores ? parseInt(args.cores) : undefined,
       target: args.target,
       quiet: args.quiet,
       verbose: args.verbose,
       force: args.force,
-      webdavUrl: args["webdav-url"]
-    } as SyncOptions);
-    
+      compress: args.compress,
+      compressionLevel: args["compression-level"] ? parseInt(args["compression-level"]) : undefined,
+      resume: args.resume,
+      chunkSize: args["chunk-size"] ? parseInt(args["chunk-size"]) : undefined
+    };
+
+    // Handle daemon mode with scheduling
+    if (args.daemon && args.schedule) {
+      console.log(chalk.blue(`Starting daemon mode with schedule: ${args.schedule}`));
+      const scheduler = new BackupScheduler();
+      await scheduler.startDaemon({
+        sourceDir: args.sourceDir,
+        schedule: args.schedule,
+        syncOptions
+      });
+      return;
+    }
+
+    // Run the main sync function with the parsed arguments
+    await syncFiles(args.sourceDir, syncOptions);
+
   } catch (error) {
     console.error(chalk.red(`Error: ${error.message}`));
     console.log();
@@ -144,4 +170,4 @@ if (import.meta.main) {
     showHelp();
     process.exit(1);
   });
-} 
+}
