@@ -15,20 +15,20 @@ import { HashCache } from './upload/hash-cache';
 import * as fsUtils from '../utils/fs-utils';
 
 describe('FileScanner', () => {
-  let fsStatSyncSpy;
-  let fsReaddirSyncSpy;
-  let fsExistsSyncSpy;
-  let fsCreateReadStreamSpy;
-  let fsPromisesReadFileSpy;
-  let fsPromisesWriteFileSpy;
-  let loggerVerboseSpy;
-  let loggerInfoSpy;
-  let loggerErrorSpy;
-  let cryptoCreateHashSpy;
-  let calculateChecksumSpy;
-  let loadJsonFromFileSpy;
-  let saveJsonToFileSpy;
-  let hashCacheCalculateHashSpy;
+  let fsStatSyncSpy: ReturnType<typeof spyOn>;
+  let fsReaddirSyncSpy: ReturnType<typeof spyOn>;
+  let fsExistsSyncSpy: ReturnType<typeof spyOn>;
+  let fsCreateReadStreamSpy: ReturnType<typeof spyOn>;
+  let fsPromisesReadFileSpy: ReturnType<typeof spyOn>;
+  let fsPromisesWriteFileSpy: ReturnType<typeof spyOn>;
+  let loggerVerboseSpy: ReturnType<typeof spyOn>;
+  let loggerInfoSpy: ReturnType<typeof spyOn>;
+  let loggerErrorSpy: ReturnType<typeof spyOn>;
+  let cryptoCreateHashSpy: ReturnType<typeof spyOn>;
+  let calculateChecksumSpy: ReturnType<typeof spyOn>;
+  let loadJsonFromFileSpy: ReturnType<typeof spyOn>;
+  let saveJsonToFileSpy: ReturnType<typeof spyOn>;
+  let hashCacheCalculateHashSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     // Mock fs functions at the lowest level
@@ -41,7 +41,7 @@ describe('FileScanner', () => {
     // Mock createReadStream to simulate file reading for both calculateChecksum and HashCache
     fsCreateReadStreamSpy = spyOn(fs, 'createReadStream').mockImplementation(() => {
       const mockStream = {
-        on: (event, callback) => {
+        on: (event: string, callback: (data?: Buffer) => void) => {
           if (event === 'data') {
             callback(Buffer.from('mock file content'));
           }
@@ -62,7 +62,7 @@ describe('FileScanner', () => {
     // Mock crypto for checksum calculation
     cryptoCreateHashSpy = spyOn(crypto, 'createHash').mockImplementation(() => {
       return {
-        update: function(data) { return this; },
+        update: function(this: crypto.Hash, _data: string | Buffer) { return this; },
         digest: () => 'mock-checksum-hash'
       };
     });
@@ -175,7 +175,7 @@ describe('FileScanner', () => {
     it('should scan directory and return file information', async () => {
       // Track call count to return different values for different directories
       let callCount = 0;
-      fsReaddirSyncSpy.mockImplementation((dirPath) => {
+      fsReaddirSyncSpy.mockImplementation((_dirPath: string) => {
         callCount++;
         if (callCount === 1) {
           // First call - root directory

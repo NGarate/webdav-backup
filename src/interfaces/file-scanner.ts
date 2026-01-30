@@ -29,4 +29,14 @@ export interface ScanResult {
 export interface UploadState {
   files: Record<string, string>; // Map of file paths to checksums
   lastRun: string; // ISO date string of last successful run
+}
+
+/**
+ * Interface for FileScanner operations used by Uploader
+ * This allows Uploader to interact with FileScanner without direct coupling
+ */
+export interface FileScannerInterface {
+  updateFileState(relativePath: string, checksum: string): void;
+  recordCompletion(): void;
+  saveState(): Promise<void>;
 } 

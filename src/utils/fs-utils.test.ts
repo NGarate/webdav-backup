@@ -18,7 +18,7 @@ describe('File System Utilities', () => {
         'test/file#anchor': 'test/file%23anchor'
       };
 
-      Object.entries(paths).forEach(([input, expected]) => {
+      Object.entries(paths).forEach(([input, expected]: [string, string]) => {
         expect(fsUtils.urlEncodePath(input)).toBe(expected);
       });
     });
@@ -101,7 +101,7 @@ describe('File System Utilities', () => {
         spyOn(fsUtils, 'existsAsync').mockImplementation(() => Promise.resolve());
         spyOn(fsUtils, 'readFileAsync').mockImplementation(() => Promise.resolve('{"key":"value","number":123}'));
 
-        const result = await fsUtils.loadJsonFromFile('/test/data.json');
+        const result = await fsUtils.loadJsonFromFile<Record<string, unknown>>('/test/data.json', {});
 
         expect(result).toEqual({ key: 'value', number: 123 });
       });

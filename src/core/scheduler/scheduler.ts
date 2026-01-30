@@ -70,8 +70,9 @@ export class BackupScheduler {
         try {
           await this.runOnce(config);
           logger.info("Scheduled backup completed successfully", this.verbosity);
-        } catch (error: any) {
-          logger.error(`Scheduled backup failed: ${error.message}`);
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.error(`Scheduled backup failed: ${errorMessage}`);
         }
       }
     );
@@ -97,8 +98,9 @@ export class BackupScheduler {
 
       const duration = ((Date.now() - startTime) / 1000).toFixed(1);
       logger.success(`Backup completed in ${duration}s`, this.verbosity);
-    } catch (error: any) {
-      logger.error(`Backup failed: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Backup failed: ${errorMessage}`);
       throw error;
     }
   }

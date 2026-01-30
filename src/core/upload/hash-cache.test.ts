@@ -15,14 +15,14 @@ import crypto from 'crypto';
 
 // Mock fs module
 const mockFs = {
-  existsSync: mock((path) => true),
+  existsSync: mock((_path: string) => true),
   promises: {
-    readFile: mock((path, encoding) => Promise.resolve('{"file1.txt":"hash1","file2.txt":"hash2"}')),
-    writeFile: mock((path, data) => Promise.resolve())
+    readFile: mock((_path: string, _encoding: string) => Promise.resolve('{"file1.txt":"hash1","file2.txt":"hash2"}')),
+    writeFile: mock((_path: string, _data: string) => Promise.resolve())
   },
-  createReadStream: mock((path) => {
+  createReadStream: mock((_path: string) => {
     const mockStream = {
-      on: (event, callback) => {
+      on: (event: string, callback: (data?: Buffer) => void) => {
         if (event === 'data') {
           callback(Buffer.from('mock file content'));
         }
@@ -38,9 +38,12 @@ const mockFs = {
 
 // Mock crypto module
 const mockCrypto = {
-  createHash: mock(() => {
+  createHash: mock((): {
+    update: (data: string | Buffer) => { digest: () => string };
+    digest: () => string;
+  } => {
     return {
-      update: mock(function(data) { return this; }),
+      update: mock(function(this: { digest: () => string }, _data: string | Buffer) { return this; }),
       digest: mock(() => 'mock-hash-value')
     };
   })
@@ -48,49 +51,54 @@ const mockCrypto = {
 
 // Create a test-friendly version of the HashCache class
 class TestableHashCache extends HashCache {
+  private _mockCalculateHash?: (filePath: string) => string;
+  private _mockLoadSuccess?: boolean;
+  private _mockLoadData?: Record<string, string> | null;
+  private _mockSaveSuccess?: boolean;
+
   // Override methods that use file system to use mockable versions instead
-  async calculateHash(filePath) {
+  async calculateHash(filePath: string): Promise<string> {
     // Use the mock hash calculator instead of the real one
     return this._mockCalculateHash ? this._mockCalculateHash(filePath) : `mock-hash-for-${filePath}`;
   }
-  
+
   // Set a mock hash calculator for testing
-  setMockHashCalculator(mockFn) {
+  setMockHashCalculator(mockFn: (filePath: string) => string): void {
     this._mockCalculateHash = mockFn;
   }
-  
+
   // Create mock load implementation
-  async load() {
+  async load(): Promise<boolean> {
     if (this._mockLoadSuccess === false) {
       return false;
     }
-    
+
     if (this._mockLoadData) {
       this.cache = new Map(Object.entries(this._mockLoadData));
       return true;
     }
-    
+
     return super.load();
   }
-  
+
   // Set mock load behavior
-  setMockLoadBehavior(success, data = null) {
+  setMockLoadBehavior(success: boolean, data: Record<string, string> | null = null): void {
     this._mockLoadSuccess = success;
     this._mockLoadData = data;
   }
-  
+
   // Create mock save implementation
-  async save() {
+  async save(): Promise<boolean> {
     return this._mockSaveSuccess !== false;
   }
-  
+
   // Set mock save behavior
-  setMockSaveBehavior(success) {
+  setMockSaveBehavior(success: boolean): void {
     this._mockSaveSuccess = success;
   }
-  
+
   // Helper to get a normalized path, just like in the original implementation
-  getNormalizedPath(filePath) {
+  getNormalizedPath(filePath: string): string {
     return path.normalize(filePath);
   }
 }

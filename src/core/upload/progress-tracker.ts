@@ -14,7 +14,7 @@ export class ProgressTracker {
   totalFiles: number;
   completedFiles: number;
   failedFiles: number;
-  updateInterval: ReturnType<typeof setInterval> | null;
+  updateInterval: NodeJS.Timeout | null;
   isTrackingActive: boolean;
   originalConsoleLog: typeof console.log;
   originalConsoleInfo: typeof console.info;
@@ -74,7 +74,7 @@ export class ProgressTracker {
 
     // Create a common handler for all console methods
     const createOverride = (originalMethod: typeof console.log) => {
-      return function(...args: any[]) {
+      return function(...args: unknown[]) {
         // Prevent recursive calls if we're already inside an override
         if (self.inOverrideFunction) {
           return originalMethod.apply(console, args);

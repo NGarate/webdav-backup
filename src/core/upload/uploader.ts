@@ -5,8 +5,18 @@
 
 import path from "path";
 import os from "os";
-import { FileInfo } from "../../interfaces/file-scanner";
+import { FileInfo, FileScannerInterface } from "../../interfaces/file-scanner";
 import { Verbosity } from "../../interfaces/logger";
+
+/**
+ * Path information for file upload operations
+ */
+interface PathInfo {
+  normalizedPath: string;
+  directory: string;
+  targetPath: string;
+  fullDirectoryPath: string;
+}
 import * as logger from "../../utils/logger";
 import { InternxtService } from "../internxt/internxt-service";
 import { CompressionService } from "../compression/compression-service";
@@ -34,9 +44,9 @@ export default class Uploader {
   private hashCache: HashCache;
   private progressTracker: ProgressTracker;
   private uploadManager: FileUploadManager;
-  private fileScanner: any;
+  private fileScanner: FileScannerInterface | null;
   private uploadedFiles: Set<string>;
-  private normalizedPaths: Map<string, any>;
+  private normalizedPaths: Map<string, PathInfo>;
   private createdDirectories: Set<string>;
   private useCompression: boolean;
   private useResume: boolean;
@@ -99,9 +109,9 @@ export default class Uploader {
 
   /**
    * Set the file scanner to use for recording uploaded files
-   * @param {FileScanner} scanner - The file scanner instance
+   * @param {FileScannerInterface} scanner - The file scanner instance
    */
-  setFileScanner(scanner: any) {
+  setFileScanner(scanner: FileScannerInterface): void {
     this.fileScanner = scanner;
     logger.verbose("File scanner set", this.verbosity);
   }
@@ -278,13 +288,14 @@ export default class Uploader {
         this.progressTracker.recordFailure();
         return { success: false, filePath: fileInfo.relativePath };
       }
-    } catch (error: any) {
+    } catch (error) {
       // Clean up compressed temp file on error
       if (compressedPath && this.compressionService) {
         await this.compressionService.cleanup(compressedPath);
       }
 
-      logger.error(`Error uploading file ${fileInfo.relativePath}: ${error.message}`);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`Error uploading file ${fileInfo.relativePath}: ${errorMessage}`);
       this.progressTracker.recordFailure();
       return { success: false, filePath: fileInfo.relativePath };
     }
@@ -401,8 +412,9 @@ export default class Uploader {
 
       // Show result summary
       this.progressTracker.displaySummary();
-    } catch (error: any) {
-      logger.error(`\nUpload process failed: ${error}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error(`\nUpload process failed: ${errorMessage}`);
 
       // Save current state if possible
       if (this.fileScanner) {

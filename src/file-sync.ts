@@ -91,8 +91,9 @@ export async function syncFiles(sourceDir: string, options: SyncOptions): Promis
     } else {
       await uploader.startUpload(scanResult.filesToUpload);
     }
-  } catch (error: any) {
-    logger.error(`Error during file sync: ${error.message}`);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error(`Error during file sync: ${errorMessage}`);
     throw error; // Let the CLI handle the error
   }
 }

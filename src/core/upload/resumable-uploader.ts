@@ -94,8 +94,9 @@ export class ResumableUploader {
 
       logger.verbose(`Found existing upload state: ${state.uploadedChunks.length}/${state.totalChunks} chunks`, this.verbosity);
       return state;
-    } catch (error: any) {
-      logger.verbose(`Failed to load state: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.verbose(`Failed to load state: ${errorMessage}`, this.verbosity);
       return null;
     }
   }
@@ -108,8 +109,9 @@ export class ResumableUploader {
 
     try {
       await writeFile(statePath, JSON.stringify(state, null, 2));
-    } catch (error: any) {
-      logger.verbose(`Failed to save state: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.verbose(`Failed to save state: ${errorMessage}`, this.verbosity);
     }
   }
 
@@ -123,8 +125,9 @@ export class ResumableUploader {
       if (existsSync(statePath)) {
         await unlink(statePath);
       }
-    } catch (error: any) {
-      logger.verbose(`Failed to clear state: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.verbose(`Failed to clear state: ${errorMessage}`, this.verbosity);
     }
   }
 
@@ -222,9 +225,10 @@ export class ResumableUploader {
           } else {
             throw new Error(result.error || "Upload failed");
           }
-        } catch (error: any) {
+        } catch (error) {
           retryCount++;
-          logger.verbose(`Upload attempt ${retryCount} failed: ${error.message}`, this.verbosity);
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger.verbose(`Upload attempt ${retryCount} failed: ${errorMessage}`, this.verbosity);
 
           if (retryCount >= maxRetries) {
             // Save state for resume
@@ -235,7 +239,7 @@ export class ResumableUploader {
               filePath,
               remotePath,
               bytesUploaded: (state.uploadedChunks.length / state.totalChunks) * fileSize,
-              error: `Upload failed after ${maxRetries} attempts: ${error.message}`
+              error: `Upload failed after ${maxRetries} attempts: ${errorMessage}`
             };
           }
 
@@ -253,13 +257,14 @@ export class ResumableUploader {
         bytesUploaded: 0,
         error: "Upload failed after all retries"
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         filePath,
         remotePath,
         bytesUploaded: 0,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -296,7 +301,7 @@ export class ResumableUploader {
       const files = await readFile(this.resumeDir, "utf-8");
       // Note: This is a simplified cleanup - in production, you'd use proper directory scanning
       logger.verbose(`Cleanup of stale states not fully implemented`, this.verbosity);
-    } catch (error: any) {
+    } catch {
       // Directory might not exist or be empty
     }
   }

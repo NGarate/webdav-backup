@@ -57,11 +57,12 @@ export class InternxtService {
           error: "Not authenticated. Please run: internxt login"
         };
       }
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         installed: false,
         authenticated: false,
-        error: `Failed to check Internxt CLI: ${error.message}`
+        error: `Failed to check Internxt CLI: ${errorMessage}`
       };
     }
   }
@@ -103,12 +104,13 @@ export class InternxtService {
         remotePath,
         output
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         filePath: localPath,
         remotePath,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -187,12 +189,13 @@ export class InternxtService {
             error: error.message
           });
         });
-      } catch (error: any) {
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         resolve({
           success: false,
           filePath: localPath,
           remotePath,
-          error: error.message
+          error: errorMessage
         });
       }
     });
@@ -227,9 +230,10 @@ export class InternxtService {
         path: remotePath,
         output
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       // Check if it's "already exists" error
-      if (error.message.toLowerCase().includes("already exists")) {
+      if (errorMessage.toLowerCase().includes("already exists")) {
         return {
           success: true,
           path: remotePath,
@@ -240,7 +244,7 @@ export class InternxtService {
       return {
         success: false,
         path: remotePath,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -270,11 +274,12 @@ export class InternxtService {
         success: true,
         files
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         files: [],
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -336,8 +341,9 @@ export class InternxtService {
 
       await execAsync(`internxt delete "${remotePath}" --permanent`);
       return true;
-    } catch (error: any) {
-      logger.verbose(`Failed to delete file: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.verbose(`Failed to delete file: ${errorMessage}`, this.verbosity);
       return false;
     }
   }

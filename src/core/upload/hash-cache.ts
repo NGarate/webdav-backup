@@ -35,14 +35,15 @@ export class HashCache {
     try {
       if (fs.existsSync(this.cachePath)) {
         const data = await fs.promises.readFile(this.cachePath, "utf8");
-        const cache = JSON.parse(data);
+        const cache: Record<string, string> = JSON.parse(data);
         this.cache = new Map(Object.entries(cache));
         logVerbose(`Loaded hash cache from ${this.cachePath}`, this.verbosity);
         return true;
       }
       return false;
-    } catch (error: any) {
-      logError(`Error loading hash cache: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logError(`Error loading hash cache: ${errorMessage}`);
       return false;
     }
   }
@@ -57,8 +58,9 @@ export class HashCache {
       await fs.promises.writeFile(this.cachePath, JSON.stringify(cache, null, 2));
       logVerbose(`Saved hash cache to ${this.cachePath}`, this.verbosity);
       return true;
-    } catch (error: any) {
-      logVerbose(`Error saving hash cache: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logVerbose(`Error saving hash cache: ${errorMessage}`, this.verbosity);
       return false;
     }
   }
@@ -113,8 +115,9 @@ export class HashCache {
       }
 
       return hasChanged;
-    } catch (error: any) {
-      logError(`Error checking file changes: ${error.message}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logError(`Error checking file changes: ${errorMessage}`);
       return true; // Assume file has changed if we can't check
     }
   }

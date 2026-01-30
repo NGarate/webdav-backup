@@ -138,7 +138,8 @@ export class CompressionService {
         compressedSize,
         ratio
       };
-    } catch (error: any) {
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         success: false,
         originalPath: filePath,
@@ -146,7 +147,7 @@ export class CompressionService {
         originalSize: 0,
         compressedSize: 0,
         ratio: 0,
-        error: error.message
+        error: errorMessage
       };
     }
   }
@@ -183,8 +184,9 @@ export class CompressionService {
         this.tempFiles.delete(filePath);
         logger.verbose(`Cleaned up temp file: ${filePath}`, this.verbosity);
       }
-    } catch (error: any) {
-      logger.verbose(`Failed to cleanup temp file: ${error.message}`, this.verbosity);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.verbose(`Failed to cleanup temp file: ${errorMessage}`, this.verbosity);
     }
   }
 

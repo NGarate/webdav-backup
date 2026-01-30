@@ -48,9 +48,9 @@ export async function calculateChecksum(filePath: string): Promise<string> {
 /**
  * Save data to a JSON file
  * @param {string} filePath - The path to the file
- * @param {Object} data - The data to save
+ * @param {T} data - The data to save
  */
-export async function saveJsonToFile(filePath: string, data: any): Promise<boolean> {
+export async function saveJsonToFile<T>(filePath: string, data: T): Promise<boolean> {
   try {
     await writeFileAsync(filePath, JSON.stringify(data, null, 2), "utf8");
     return true;
@@ -63,14 +63,14 @@ export async function saveJsonToFile(filePath: string, data: any): Promise<boole
 /**
  * Load data from a JSON file
  * @param {string} filePath - The path to the file
- * @param {Object} defaultValue - The default value to return if the file doesn't exist
- * @returns {Object} The parsed JSON data or the default value
+ * @param {T} defaultValue - The default value to return if the file doesn't exist
+ * @returns {T} The parsed JSON data or the default value
  */
-export async function loadJsonFromFile(filePath: string, defaultValue: any = {}): Promise<any> {
+export async function loadJsonFromFile<T>(filePath: string, defaultValue: T): Promise<T> {
   try {
     await existsAsync(filePath);
     const data = await readFileAsync(filePath, "utf8");
-    return JSON.parse(data);
+    return JSON.parse(data) as T;
   } catch {
     return defaultValue;
   }

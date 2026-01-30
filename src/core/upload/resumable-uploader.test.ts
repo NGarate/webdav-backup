@@ -267,7 +267,12 @@ describe('ResumableUploader', () => {
       const testFile = join(tempDir, 'small.txt');
       await writeFile(testFile, 'small content');
 
-      mockUploadFileWithProgress.mockImplementation(() => Promise.resolve({
+      mockUploadFileWithProgress.mockImplementation((): Promise<{
+        success: boolean;
+        filePath: string;
+        remotePath: string;
+        output: string;
+      }> => Promise.resolve({
         success: true,
         filePath: testFile,
         remotePath: '/remote/small.txt',
@@ -286,7 +291,12 @@ describe('ResumableUploader', () => {
       const content = Buffer.alloc(101 * 1024 * 1024, 0);
       await writeFile(testFile, content);
 
-      mockUploadFileWithProgress.mockImplementation(() => Promise.resolve({
+      mockUploadFileWithProgress.mockImplementation((): Promise<{
+        success: boolean;
+        filePath: string;
+        remotePath: string;
+        output: string;
+      }> => Promise.resolve({
         success: true,
         filePath: testFile,
         remotePath: '/remote/large.bin',
@@ -320,7 +330,13 @@ describe('ResumableUploader', () => {
 
       // Reset mock before test
       mockUploadFileWithProgress.mockClear();
-      mockUploadFileWithProgress.mockImplementation(() => Promise.resolve({
+      mockUploadFileWithProgress.mockImplementation((): Promise<{
+        success: boolean;
+        filePath: string;
+        remotePath: string;
+        output: string;
+        error: string;
+      }> => Promise.resolve({
         success: false,
         filePath: testFile,
         remotePath: '/remote/fail.bin',
@@ -342,7 +358,7 @@ describe('ResumableUploader', () => {
 
       const progressCallback = mock(() => {});
 
-      mockUploadFileWithProgress.mockImplementation((path, remote, onProgress) => {
+      mockUploadFileWithProgress.mockImplementation((path: string, remote: string, onProgress?: (percent: number) => void) => {
         if (onProgress) {
           onProgress(50);
         }

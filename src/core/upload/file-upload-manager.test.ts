@@ -10,7 +10,7 @@ import * as logger from '../../utils/logger';
 describe('FileUploadManager', () => {
   // Mock dependencies
   const verbosity = Verbosity.Normal;
-  const mockUploadHandler = mock(() => Promise.resolve({ success: true }));
+  const mockUploadHandler = mock((): Promise<{ success: boolean }> => Promise.resolve({ success: true }));
   
   // Test data
   const testFiles = [
@@ -19,7 +19,12 @@ describe('FileUploadManager', () => {
     { filePath: 'file3.txt', targetPath: '/upload/file3.txt' }
   ];
   
-  let mockProgressTracker;
+  interface MockProgressTracker {
+    recordSuccess: () => void;
+    recordFailure: () => void;
+  }
+  
+  let mockProgressTracker: MockProgressTracker;
 
   beforeEach(() => {
     jest.useFakeTimers();
