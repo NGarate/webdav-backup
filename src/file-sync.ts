@@ -1,17 +1,16 @@
 /**
  * Internxt File Synchronization Tool
- *
  * Optimized for Bun's runtime for maximum performance
  */
 
 import chalk from "chalk";
-import { getOptimalConcurrency } from "./utils/env-utils";
-import * as logger from "./utils/logger";
-import FileScanner from "./core/file-scanner";
-import Uploader from "./core/upload/uploader";
-import { InternxtService } from "./core/internxt/internxt-service";
+import { getOptimalConcurrency } from "./utils/env-utils.js";
+import * as logger from "./utils/logger.js";
+import { initFileScanner, scanFiles } from "./core/file-scanner.js";
+import { initUploader, startUpload } from "./core/upload/uploader.js";
+import { initInternxtService, checkInternxtCLI } from "./core/internxt/internxt-service.js";
+import { formatError } from "./utils/error-handler.js";
 
-// Define options interface for better type checking
 export interface SyncOptions {
   cores?: number;
   target?: string;
@@ -27,7 +26,7 @@ export interface SyncOptions {
  */
 export async function syncFiles(sourceDir: string, options: SyncOptions): Promise<void> {
   try {
-    // Determine verbosity level using the Verbosity enum
+    // Determine verbosity level
     let verbosity: logger.Verbosity;
     if (options.quiet) {
       verbosity = logger.Verbosity.Quiet;
@@ -37,10 +36,12 @@ export async function syncFiles(sourceDir: string, options: SyncOptions): Promis
       verbosity = logger.Verbosity.Normal;
     }
 
+    // Initialize services
+    initInternxtService(verbosity);
+    
     // Check Internxt CLI status
     logger.info("Checking Internxt CLI...", verbosity);
-    const internxtService = new InternxtService({ verbosity });
-    const cliStatus = await internxtService.checkCLI();
+    const cliStatus = await checkInternxtCLI();
 
     if (!cliStatus.installed) {
       throw new Error(
@@ -58,14 +59,11 @@ export async function syncFiles(sourceDir: string, options: SyncOptions): Promis
 
     logger.success(`Internxt CLI v${cliStatus.version} ready`, verbosity);
 
-    // Initialize file scanner with force upload option if specified
-    const fileScanner = new FileScanner(sourceDir, verbosity, options.force);
-
-    // Get optimal concurrency
+    // Initialize scanner and uploader
+    initFileScanner(sourceDir, verbosity, options.force);
+    
     const concurrentUploads = getOptimalConcurrency(options.cores);
-
-    // Create uploader
-    const uploader = new Uploader(
+    initUploader(
       concurrentUploads,
       options.target || "/",
       verbosity,
@@ -75,21 +73,17 @@ export async function syncFiles(sourceDir: string, options: SyncOptions): Promis
       }
     );
 
-    // Link the file scanner to the uploader
-    uploader.setFileScanner(fileScanner);
+    // Scan and upload
+    const scanResult = await scanFiles();
 
-    // Scan the source directory
-    const scanResult = await fileScanner.scan();
-
-    // Start the upload process
     if (scanResult.filesToUpload.length === 0) {
       logger.success("All files are up to date. Nothing to upload.", verbosity);
     } else {
-      await uploader.startUpload(scanResult.filesToUpload);
+      await startUpload(scanResult.filesToUpload);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = formatError(error);
     logger.error(`Error during file sync: ${errorMessage}`);
-    throw error; // Let the CLI handle the error
+    throw error;
   }
 }
