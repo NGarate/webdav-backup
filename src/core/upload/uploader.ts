@@ -1,379 +1,266 @@
 /**
- * Internxt Uploader
+ * Internxt Uploader - Functional exports
  * Handles file uploads to Internxt Drive with improved modularity
  */
 
-import path from "path";
-import os from "os";
-import { FileInfo, FileScannerInterface } from "../../interfaces/file-scanner";
-import { Verbosity } from "../../interfaces/logger";
-
-/**
- * Path information for file upload operations
- */
-interface PathInfo {
-  normalizedPath: string;
-  directory: string;
-  targetPath: string;
-  fullDirectoryPath: string;
-}
-import * as logger from "../../utils/logger";
-import { InternxtService } from "../internxt/internxt-service";
-import { ResumableUploader } from "./resumable-uploader";
-import { HashCache } from "./hash-cache";
-import { ProgressTracker } from "./progress-tracker";
-import { FileUploadManager } from "./file-upload-manager";
+import path from "node:path";
+import os from "node:os";
+import { FileInfo } from "../../interfaces/file-scanner.js";
+import { Verbosity } from "../../interfaces/logger.js";
+import * as logger from "../../utils/logger.js";
+import {
+  initInternxtService,
+  checkInternxtCLI,
+  internxtCreateFolder,
+  internxtUploadFile
+} from "../internxt/internxt-service.js";
+import {
+  initResumableUploader,
+  shouldUseResumable,
+  uploadLargeFile
+} from "./resumable-uploader.js";
+import {
+  initHashCache,
+  loadHashCache,
+  hashCacheHasChanged
+} from "./hash-cache.js";
+import {
+  initProgressTracker,
+  recordProgressSuccess,
+  recordProgressFailure,
+  startProgressUpdates,
+  stopProgressUpdates,
+  displayProgressSummary
+} from "./progress-tracker.js";
+import {
+  initFileQueue,
+  setFileQueue,
+  startFileQueue
+} from "./file-upload-manager.js";
+import {
+  updateScannerFileState,
+  recordScannerCompletion,
+  saveScannerState
+} from "../file-scanner.js";
 
 export interface UploaderOptions {
   resume?: boolean;
   chunkSize?: number;
 }
 
-/**
- * Internxt Uploader class with improved modularity
- */
-export default class Uploader {
-  private targetDir: string;
-  private verbosity: number;
-  private internxtService: InternxtService;
-  private resumableUploader?: ResumableUploader;
-  private hashCache: HashCache;
-  private progressTracker: ProgressTracker;
-  private uploadManager: FileUploadManager;
-  private fileScanner: FileScannerInterface | null;
-  private uploadedFiles: Set<string>;
-  private normalizedPaths: Map<string, PathInfo>;
-  private createdDirectories: Set<string>;
-  private useResume: boolean;
+interface PathInfo {
+  normalizedPath: string;
+  directory: string;
+  targetPath: string;
+  fullDirectoryPath: string;
+}
 
-  /**
-   * Create a new Internxt Uploader
-   * @param {number} concurrentUploads - Number of concurrent uploads
-   * @param {string} targetDir - The target directory in Internxt Drive
-   * @param {number} verbosity - Verbosity level
-   * @param {UploaderOptions} options - Additional upload options
-   */
-  constructor(
-    concurrentUploads: number,
-    targetDir: string = "",
-    verbosity: number = Verbosity.Normal,
-    options: UploaderOptions = {}
-  ) {
-    this.targetDir = targetDir.trim().replace(/^\/+|\/+$/g, "");
-    this.verbosity = verbosity;
-    this.useResume = options.resume ?? false;
+let _targetDir = "";
+let _verbosity = Verbosity.Normal;
+let _useResume = false;
+let _uploadedFiles = new Set<string>();
+let _normalizedPaths = new Map<string, PathInfo>();
+let _createdDirectories = new Set<string>();
 
-    // Initialize services
-    this.internxtService = new InternxtService({ verbosity });
+export const initUploader = (
+  concurrentUploads: number,
+  targetDir: string = "",
+  verbosity: number = Verbosity.Normal,
+  options: UploaderOptions = {}
+): void => {
+  _targetDir = targetDir.trim().replace(/^\/+|\/+/g, "");
+  _verbosity = verbosity;
+  _useResume = options.resume ?? false;
+  _uploadedFiles.clear();
+  _normalizedPaths.clear();
+  _createdDirectories.clear();
 
-    if (this.useResume) {
-      this.resumableUploader = new ResumableUploader(this.internxtService, {
-        chunkSize: options.chunkSize ? options.chunkSize * 1024 * 1024 : undefined,
-        verbosity
-      });
-    }
-
-    this.hashCache = new HashCache(
-      path.join(os.tmpdir(), "internxt-backup-hash-cache.json"),
+  // Initialize all functional modules
+  initInternxtService(verbosity);
+  
+  if (_useResume) {
+    initResumableUploader({
+      chunkSize: options.chunkSize ? options.chunkSize * 1024 * 1024 : undefined,
       verbosity
-    );
-    this.progressTracker = new ProgressTracker(verbosity);
-    this.uploadManager = new FileUploadManager(
-      concurrentUploads,
-      this.handleFileUpload.bind(this),
-      verbosity
-    );
-
-    // Load hash cache on construction
-    this.hashCache.load();
-
-    // Initialize state
-    this.fileScanner = null;
-    this.uploadedFiles = new Set();
-    this.normalizedPaths = new Map();
-    this.createdDirectories = new Set();
+    });
   }
 
-  /**
-   * Set the file scanner to use for recording uploaded files
-   * @param {FileScannerInterface} scanner - The file scanner instance
-   */
-  setFileScanner(scanner: FileScannerInterface): void {
-    this.fileScanner = scanner;
-    logger.verbose("File scanner set", this.verbosity);
+  const cachePath = path.join(os.tmpdir(), "internxt-backup-hash-cache.json");
+  initHashCache(cachePath, verbosity);
+  
+  initProgressTracker(0); // Will be initialized with count later
+  initFileQueue(concurrentUploads, handleFileUpload, verbosity);
+  
+  // Load hash cache
+  loadHashCache();
+};
+
+const ensureDirectoryExists = async (directory: string): Promise<boolean> => {
+  if (!directory) return true;
+  if (_createdDirectories.has(directory)) {
+    logger.verbose(`Directory already created: ${directory}`, _verbosity);
+    return true;
   }
 
-  /**
-   * Create directory structure if needed and track which directories have been created
-   * @param {string} directory - Directory to create
-   * @returns {Promise<boolean>} True if successful
-   */
-  async ensureDirectoryExists(directory: string): Promise<boolean> {
-    // Skip if no directory or empty
-    if (!directory) return true;
+  const result = await internxtCreateFolder(directory);
+  if (result.success) {
+    _createdDirectories.add(directory);
+  }
+  return result.success;
+};
 
-    // Skip if we've already created this directory in this session
-    if (this.createdDirectories.has(directory)) {
-      logger.verbose(`Directory already created in this session: ${directory}`, this.verbosity);
-      return true;
+const getPathInfo = (fileInfo: FileInfo): PathInfo => {
+  let pathInfo = _normalizedPaths.get(fileInfo.relativePath);
+  
+  if (!pathInfo) {
+    const normalizedPath = fileInfo.relativePath.replace(/\\/g, "/");
+    const lastSlashIndex = normalizedPath.lastIndexOf("/");
+    const directory = lastSlashIndex > 0 ? normalizedPath.substring(0, lastSlashIndex) : "";
+    const targetPath = _targetDir ? `${_targetDir}/${normalizedPath}` : normalizedPath;
+    const fullDirectoryPath = directory
+      ? (_targetDir ? `${_targetDir}/${directory}` : directory)
+      : _targetDir;
+
+    pathInfo = { normalizedPath, directory, targetPath, fullDirectoryPath };
+    _normalizedPaths.set(fileInfo.relativePath, pathInfo);
+  }
+  
+  return pathInfo;
+};
+
+const handleFileUpload = async (fileInfo: FileInfo): Promise<{ success: boolean; filePath: string }> => {
+  try {
+    if (_uploadedFiles.has(fileInfo.relativePath)) {
+      logger.verbose(`File ${fileInfo.relativePath} already uploaded, skipping`, _verbosity);
+      return { success: true, filePath: fileInfo.relativePath };
     }
 
-    // Create the directory structure
-    const result = await this.internxtService.createFolder(directory);
+    if (fileInfo.hasChanged === false) {
+      logger.verbose(`File ${fileInfo.relativePath} unchanged, skipping`, _verbosity);
+      recordProgressSuccess();
+      return { success: true, filePath: fileInfo.relativePath };
+    }
 
-    // If successful, add to our tracking set
+    if (fileInfo.hasChanged === null) {
+      const hasChanged = await hashCacheHasChanged(fileInfo.absolutePath);
+      if (!hasChanged) {
+        logger.verbose(`File ${fileInfo.relativePath} unchanged, skipping`, _verbosity);
+        recordProgressSuccess();
+        return { success: true, filePath: fileInfo.relativePath };
+      }
+    }
+
+    logger.verbose(`Uploading ${fileInfo.relativePath}...`, _verbosity);
+
+    if (_targetDir) {
+      await ensureDirectoryExists(_targetDir);
+    }
+
+    const pathInfo = getPathInfo(fileInfo);
+
+    if (pathInfo.directory) {
+      logger.verbose(`Creating directory: ${pathInfo.directory}`, _verbosity);
+      await ensureDirectoryExists(pathInfo.fullDirectoryPath);
+    }
+
+    let result;
+    const finalRemotePath = pathInfo.targetPath;
+
+    if (_useResume && shouldUseResumable(fileInfo.size)) {
+      result = await uploadLargeFile(
+        fileInfo.absolutePath,
+        finalRemotePath,
+        (percent) => {
+          logger.verbose(`Progress: ${percent}%`, _verbosity);
+        }
+      );
+      result = {
+        success: result.success,
+        filePath: fileInfo.absolutePath,
+        remotePath: finalRemotePath,
+        output: result.error
+      };
+    } else {
+      result = await internxtUploadFile(fileInfo.absolutePath, finalRemotePath);
+    }
+
     if (result.success) {
-      this.createdDirectories.add(directory);
-    }
-
-    return result.success;
-  }
-
-  /**
-   * Handle the upload of a single file
-   * @param {Object} fileInfo - File information object
-   * @returns {Promise<{success: boolean, filePath: string}>} Upload result
-   */
-  async handleFileUpload(fileInfo: FileInfo): Promise<{ success: boolean; filePath: string }> {
-    try {
-      // Check if we've already uploaded this file in this session
-      if (this.uploadedFiles.has(fileInfo.relativePath)) {
-        logger.verbose(`File ${fileInfo.relativePath} already uploaded in this session, skipping`, this.verbosity);
-        return { success: true, filePath: fileInfo.relativePath };
-      }
-
-      // Check if file has changed - use flag from file scanner if available
-      if (fileInfo.hasChanged === false) {
-        logger.verbose(`File ${fileInfo.relativePath} has not changed, skipping upload`, this.verbosity);
-        this.progressTracker.recordSuccess();
-        return { success: true, filePath: fileInfo.relativePath };
-      }
-
-      // For files not pre-checked, use the hash cache
-      if (fileInfo.hasChanged === null) {
-        const hasChanged = await this.hashCache.hasChanged(fileInfo.absolutePath);
-        if (!hasChanged) {
-          logger.verbose(`File ${fileInfo.relativePath} has not changed, skipping upload`, this.verbosity);
-          this.progressTracker.recordSuccess();
-          return { success: true, filePath: fileInfo.relativePath };
-        }
-      }
-
-      logger.verbose(`File ${fileInfo.relativePath} has changed, uploading...`, this.verbosity);
-
-      // Create target directory if it doesn't exist
-      if (this.targetDir) {
-        await this.ensureDirectoryExists(this.targetDir);
-      }
-
-      // Get or create normalized path info
-      let pathInfo = this.normalizedPaths.get(fileInfo.relativePath);
-
-      if (!pathInfo) {
-        // Normalize the relative path to use forward slashes
-        const normalizedPath = fileInfo.relativePath.replace(/\\/g, "/");
-
-        // Extract directory from the relative path
-        const lastSlashIndex = normalizedPath.lastIndexOf("/");
-        const directory = lastSlashIndex > 0 ? normalizedPath.substring(0, lastSlashIndex) : "";
-
-        // Construct the target path
-        const targetPath = this.targetDir
-          ? `${this.targetDir}/${normalizedPath}`
-          : normalizedPath;
-
-        // Create full directory path
-        const fullDirectoryPath = directory
-          ? (this.targetDir ? `${this.targetDir}/${directory}` : directory)
-          : this.targetDir;
-
-        // Store all the path info to avoid recalculating
-        pathInfo = {
-          normalizedPath,
-          directory,
-          targetPath,
-          fullDirectoryPath
-        };
-
-        // Cache the normalized path info
-        this.normalizedPaths.set(fileInfo.relativePath, pathInfo);
-      }
-
-      // Create directory structure if needed
-      if (pathInfo.directory) {
-        logger.verbose(`Ensuring directory structure exists for file: ${pathInfo.directory}`, this.verbosity);
-        await this.ensureDirectoryExists(pathInfo.fullDirectoryPath);
-      }
-
-      // Upload the file
-      let result;
-      const finalRemotePath = pathInfo.targetPath;
-
-      if (this.resumableUploader && this.resumableUploader.shouldUseResumable(fileInfo.size)) {
-        // Use resumable upload for large files
-        result = await this.resumableUploader.uploadLargeFile(
-          fileInfo.absolutePath,
-          finalRemotePath,
-          (percent) => {
-            logger.verbose(`Upload progress: ${percent}%`, this.verbosity);
-          }
-        );
-
-        // Convert to expected format
-        result = {
-          success: result.success,
-          filePath: fileInfo.absolutePath,
-          remotePath: finalRemotePath,
-          output: result.error
-        };
-      } else {
-        // Use regular upload
-        result = await this.internxtService.uploadFile(fileInfo.absolutePath, finalRemotePath);
-      }
-
-      if (result.success) {
-        // Track that we've uploaded this file to avoid duplicate messages
-        this.uploadedFiles.add(fileInfo.relativePath);
-
-        // Log success
-        logger.success(`Successfully uploaded ${fileInfo.relativePath}`, this.verbosity);
-
-        // Update file scanner if available
-        if (this.fileScanner) {
-          this.fileScanner.updateFileState(fileInfo.relativePath, fileInfo.checksum);
-        }
-        this.progressTracker.recordSuccess();
-        return { success: true, filePath: fileInfo.relativePath };
-      } else {
-        logger.error(`Failed to upload ${fileInfo.relativePath}: ${result.output}`);
-        this.progressTracker.recordFailure();
-        return { success: false, filePath: fileInfo.relativePath };
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`Error uploading file ${fileInfo.relativePath}: ${errorMessage}`);
-      this.progressTracker.recordFailure();
+      _uploadedFiles.add(fileInfo.relativePath);
+      logger.success(`Uploaded ${fileInfo.relativePath}`, _verbosity);
+      updateScannerFileState(fileInfo.relativePath, fileInfo.checksum);
+      recordProgressSuccess();
+      return { success: true, filePath: fileInfo.relativePath };
+    } else {
+      logger.error(`Failed ${fileInfo.relativePath}: ${result.output}`);
+      recordProgressFailure();
       return { success: false, filePath: fileInfo.relativePath };
     }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(`Error uploading ${fileInfo.relativePath}: ${msg}`);
+    recordProgressFailure();
+    return { success: false, filePath: fileInfo.relativePath };
+  }
+};
+
+export const startUpload = async (filesToUpload: FileInfo[]): Promise<void> => {
+  const cliStatus = await checkInternxtCLI();
+  if (!cliStatus.installed || !cliStatus.authenticated) {
+    logger.error("Internxt CLI not ready.");
+    if (cliStatus.error) logger.error(cliStatus.error);
+    return;
   }
 
-  /**
-   * Start the upload process
-   * @param {Array} filesToUpload - Array of files to upload
-   * @returns {Promise<void>}
-   */
-  async startUpload(filesToUpload: FileInfo[]): Promise<void> {
-    // Check connectivity first
-    const cliStatus = await this.internxtService.checkCLI();
-    if (!cliStatus.installed || !cliStatus.authenticated) {
-      logger.error("Internxt CLI not ready. Upload cannot proceed.");
-      if (cliStatus.error) {
-        logger.error(cliStatus.error);
-      }
-      return;
-    }
+  if (_targetDir) {
+    const dirResult = await ensureDirectoryExists(_targetDir);
+    logger.verbose(`Target directory: ${dirResult ? "success" : "failed"}`, _verbosity);
+  }
 
-    // Create the target directory structure if needed
-    if (this.targetDir) {
-      const dirResult = await this.ensureDirectoryExists(this.targetDir);
-      logger.verbose(`Target directory result: ${dirResult ? "success" : "failed"}`, this.verbosity);
-    }
+  if (filesToUpload.length === 0) {
+    logger.success("All files are up to date.", _verbosity);
+    return;
+  }
 
-    if (filesToUpload.length === 0) {
-      logger.success("All files are up to date.", this.verbosity);
-      return;
-    }
+  _uploadedFiles.clear();
+  _createdDirectories.clear();
 
-    // Reset tracking sets for new upload session
-    this.uploadedFiles.clear();
-    this.createdDirectories.clear();
-
-    // Extract and pre-create all unique directories
-    if (filesToUpload.length > 1) {
-      const uniqueDirectories = new Set<string>();
-
-      // Analyze files and collect unique directories
-      for (const fileInfo of filesToUpload) {
-        let pathInfo = this.normalizedPaths.get(fileInfo.relativePath);
-
-        if (!pathInfo) {
-          // Normalize the relative path
-          const normalizedPath = fileInfo.relativePath.replace(/\\/g, "/");
-
-          // Extract directory from the relative path
-          const lastSlashIndex = normalizedPath.lastIndexOf("/");
-          const directory = lastSlashIndex > 0 ? normalizedPath.substring(0, lastSlashIndex) : "";
-
-          // Create full directory path
-          const fullDirectoryPath = directory
-            ? (this.targetDir ? `${this.targetDir}/${directory}` : directory)
-            : this.targetDir;
-
-          if (directory) {
-            uniqueDirectories.add(fullDirectoryPath);
-          }
-
-          // Store all the path info to avoid recalculating
-          pathInfo = {
-            normalizedPath,
-            directory,
-            targetPath: this.targetDir ? `${this.targetDir}/${normalizedPath}` : normalizedPath,
-            fullDirectoryPath
-          };
-
-          // Cache the normalized path info
-          this.normalizedPaths.set(fileInfo.relativePath, pathInfo);
-        } else if (pathInfo.directory) {
-          uniqueDirectories.add(pathInfo.fullDirectoryPath);
-        }
-      }
-
-      // Create all unique directories first
-      logger.verbose(`Pre-creating ${uniqueDirectories.size} unique directories...`, this.verbosity);
-      const directories = Array.from(uniqueDirectories);
-      for (const dir of directories) {
-        await this.ensureDirectoryExists(dir);
+  // Pre-create directories
+  if (filesToUpload.length > 1) {
+    const uniqueDirectories = new Set<string>();
+    for (const fileInfo of filesToUpload) {
+      const pathInfo = getPathInfo(fileInfo);
+      if (pathInfo.directory) {
+        uniqueDirectories.add(pathInfo.fullDirectoryPath);
       }
     }
 
-    // Show starting message before initializing progress tracker
-    logger.info(`Starting parallel upload with ${this.uploadManager.maxConcurrency} concurrent uploads...`, this.verbosity);
-
-    // Small delay to ensure the message is displayed before progress bar
-    await new Promise(resolve => setTimeout(resolve, 50));
-
-    // Initialize progress tracker
-    this.progressTracker.initialize(filesToUpload.length);
-    this.progressTracker.startProgressUpdates();
-
-    // Set up upload manager
-    this.uploadManager.setQueue(filesToUpload);
-
-    try {
-      // Start upload and wait for completion
-      await new Promise<void>((resolve) => {
-        this.uploadManager.start(resolve);
-      });
-
-      // Final update to state file if we have a file scanner
-      if (this.fileScanner) {
-        this.fileScanner.recordCompletion();
-        await this.fileScanner.saveState();
-      }
-
-      // Show result summary
-      this.progressTracker.displaySummary();
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error(`\nUpload process failed: ${errorMessage}`);
-
-      // Save current state if possible
-      if (this.fileScanner) {
-        await this.fileScanner.saveState();
-      }
-    } finally {
-      // Stop progress updates
-      this.progressTracker.stopProgressUpdates();
+    logger.verbose(`Creating ${uniqueDirectories.size} directories...`, _verbosity);
+    for (const dir of uniqueDirectories) {
+      await ensureDirectoryExists(dir);
     }
   }
-}
+
+  // Initialize progress
+  initProgressTracker(filesToUpload.length);
+  startProgressUpdates();
+
+  // Set up queue
+  setFileQueue(filesToUpload);
+
+  try {
+    // Start upload
+    await new Promise<void>((resolve) => {
+      startFileQueue(resolve);
+    });
+
+    recordScannerCompletion();
+    await saveScannerState();
+    displayProgressSummary();
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.error(`\nUpload failed: ${msg}`);
+    await saveScannerState();
+  } finally {
+    stopProgressUpdates();
+  }
+};
