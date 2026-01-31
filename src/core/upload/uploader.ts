@@ -19,15 +19,12 @@ interface PathInfo {
 }
 import * as logger from "../../utils/logger";
 import { InternxtService } from "../internxt/internxt-service";
-import { CompressionService } from "../compression/compression-service";
 import { ResumableUploader } from "./resumable-uploader";
 import { HashCache } from "./hash-cache";
 import { ProgressTracker } from "./progress-tracker";
 import { FileUploadManager } from "./file-upload-manager";
 
 export interface UploaderOptions {
-  compress?: boolean;
-  compressionLevel?: number;
   resume?: boolean;
   chunkSize?: number;
 }
@@ -39,7 +36,6 @@ export default class Uploader {
   private targetDir: string;
   private verbosity: number;
   private internxtService: InternxtService;
-  private compressionService?: CompressionService;
   private resumableUploader?: ResumableUploader;
   private hashCache: HashCache;
   private progressTracker: ProgressTracker;
@@ -48,7 +44,6 @@ export default class Uploader {
   private uploadedFiles: Set<string>;
   private normalizedPaths: Map<string, PathInfo>;
   private createdDirectories: Set<string>;
-  private useCompression: boolean;
   private useResume: boolean;
 
   /**
@@ -66,18 +61,10 @@ export default class Uploader {
   ) {
     this.targetDir = targetDir.trim().replace(/^\/+|\/+$/g, "");
     this.verbosity = verbosity;
-    this.useCompression = options.compress ?? false;
     this.useResume = options.resume ?? false;
 
     // Initialize services
     this.internxtService = new InternxtService({ verbosity });
-
-    if (this.useCompression) {
-      this.compressionService = new CompressionService({
-        level: options.compressionLevel,
-        verbosity
-      });
-    }
 
     if (this.useResume) {
       this.resumableUploader = new ResumableUploader(this.internxtService, {
@@ -148,8 +135,6 @@ export default class Uploader {
    * @returns {Promise<{success: boolean, filePath: string}>} Upload result
    */
   async handleFileUpload(fileInfo: FileInfo): Promise<{ success: boolean; filePath: string }> {
-    let compressedPath: string | null = null;
-
     try {
       // Check if we've already uploaded this file in this session
       if (this.uploadedFiles.has(fileInfo.relativePath)) {
@@ -220,33 +205,14 @@ export default class Uploader {
         await this.ensureDirectoryExists(pathInfo.fullDirectoryPath);
       }
 
-      // Determine upload path (may be compressed)
-      let uploadPath = fileInfo.absolutePath;
-      let finalRemotePath = pathInfo.targetPath;
-
-      // Compress if enabled and beneficial
-      if (this.compressionService && this.compressionService.shouldCompress(fileInfo.absolutePath, fileInfo.size)) {
-        const compressionResult = await this.compressionService.compressFile(fileInfo.absolutePath);
-
-        if (compressionResult.success && compressionResult.ratio > 0) {
-          uploadPath = compressionResult.compressedPath;
-          finalRemotePath = this.compressionService.getCompressedRemotePath(pathInfo.targetPath);
-          compressedPath = uploadPath;
-
-          logger.verbose(
-            `Compressed ${fileInfo.relativePath}: ${compressionResult.ratio.toFixed(1)}% reduction`,
-            this.verbosity
-          );
-        }
-      }
-
       // Upload the file
       let result;
+      const finalRemotePath = pathInfo.targetPath;
 
       if (this.resumableUploader && this.resumableUploader.shouldUseResumable(fileInfo.size)) {
         // Use resumable upload for large files
         result = await this.resumableUploader.uploadLargeFile(
-          uploadPath,
+          fileInfo.absolutePath,
           finalRemotePath,
           (percent) => {
             logger.verbose(`Upload progress: ${percent}%`, this.verbosity);
@@ -256,18 +222,13 @@ export default class Uploader {
         // Convert to expected format
         result = {
           success: result.success,
-          filePath: uploadPath,
+          filePath: fileInfo.absolutePath,
           remotePath: finalRemotePath,
           output: result.error
         };
       } else {
         // Use regular upload
-        result = await this.internxtService.uploadFile(uploadPath, finalRemotePath);
-      }
-
-      // Clean up compressed temp file if used
-      if (compressedPath && this.compressionService) {
-        await this.compressionService.cleanup(compressedPath);
+        result = await this.internxtService.uploadFile(fileInfo.absolutePath, finalRemotePath);
       }
 
       if (result.success) {
@@ -289,11 +250,6 @@ export default class Uploader {
         return { success: false, filePath: fileInfo.relativePath };
       }
     } catch (error) {
-      // Clean up compressed temp file on error
-      if (compressedPath && this.compressionService) {
-        await this.compressionService.cleanup(compressedPath);
-      }
-
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`Error uploading file ${fileInfo.relativePath}: ${errorMessage}`);
       this.progressTracker.recordFailure();
@@ -403,11 +359,6 @@ export default class Uploader {
       if (this.fileScanner) {
         this.fileScanner.recordCompletion();
         await this.fileScanner.saveState();
-      }
-
-      // Clean up all temp files
-      if (this.compressionService) {
-        await this.compressionService.cleanupAll();
       }
 
       // Show result summary

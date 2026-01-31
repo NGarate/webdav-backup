@@ -347,6 +347,131 @@ export class InternxtService {
       return false;
     }
   }
+
+  /**
+   * Download a file from Internxt Drive
+   * @param remotePath - Path to the file in Internxt Drive
+   * @param localPath - Local destination path
+   * @returns Download result with success status
+   */
+  async downloadFile(remotePath: string, localPath: string): Promise<InternxtUploadResult> {
+    try {
+      logger.verbose(`Downloading ${remotePath} to ${localPath}`, this.verbosity);
+
+      // Download the file using Internxt CLI
+      const { stdout, stderr } = await execAsync(
+        `internxt download-file "${remotePath}" "${localPath}"`
+      );
+
+      const output = stdout || stderr;
+
+      if (output.toLowerCase().includes("error") || output.toLowerCase().includes("failed")) {
+        return {
+          success: false,
+          filePath: localPath,
+          remotePath,
+          output,
+          error: output
+        };
+      }
+
+      return {
+        success: true,
+        filePath: localPath,
+        remotePath,
+        output
+      };
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      return {
+        success: false,
+        filePath: localPath,
+        remotePath,
+        error: errorMessage
+      };
+    }
+  }
+
+  /**
+   * Download a file with progress tracking using streaming
+   * @param remotePath - Path to the file in Internxt Drive
+   * @param localPath - Local destination path
+   * @param onProgress - Callback for progress updates
+   * @returns Download result with success status
+   */
+  async downloadFileWithProgress(
+    remotePath: string,
+    localPath: string,
+    onProgress?: (percent: number) => void
+  ): Promise<InternxtUploadResult> {
+    return new Promise((resolve) => {
+      try {
+        logger.verbose(`Downloading with progress: ${remotePath} to ${localPath}`, this.verbosity);
+
+        // Use spawn for streaming output
+        const child = spawn("internxt", ["download-file", remotePath, localPath], {
+          stdio: ["ignore", "pipe", "pipe"]
+        });
+
+        let output = "";
+        let errorOutput = "";
+
+        child.stdout.on("data", (data) => {
+          const chunk = data.toString();
+          output += chunk;
+
+          // Try to parse progress from output
+          const progressMatch = chunk.match(/(\d+)%/);
+          if (progressMatch && onProgress) {
+            const percent = parseInt(progressMatch[1], 10);
+            onProgress(percent);
+          }
+        });
+
+        child.stderr.on("data", (data) => {
+          errorOutput += data.toString();
+        });
+
+        child.on("close", (code) => {
+          const fullOutput = output + errorOutput;
+
+          if (code === 0 && !fullOutput.toLowerCase().includes("error")) {
+            resolve({
+              success: true,
+              filePath: localPath,
+              remotePath,
+              output: fullOutput
+            });
+          } else {
+            resolve({
+              success: false,
+              filePath: localPath,
+              remotePath,
+              output: fullOutput,
+              error: fullOutput || `Process exited with code ${code}`
+            });
+          }
+        });
+
+        child.on("error", (error: Error) => {
+          resolve({
+            success: false,
+            filePath: localPath,
+            remotePath,
+            error: error.message
+          });
+        });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        resolve({
+          success: false,
+          filePath: localPath,
+          remotePath,
+          error: errorMessage
+        });
+      }
+    });
+  }
 }
 
 export default InternxtService;

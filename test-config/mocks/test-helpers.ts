@@ -78,6 +78,24 @@ export interface MockInternxtService {
   }>;
   fileExists: (remotePath: string) => Promise<boolean>;
   deleteFile: (remotePath: string) => Promise<boolean>;
+  downloadFile: (remotePath: string, localPath: string) => Promise<{
+    success: boolean;
+    filePath: string;
+    remotePath: string;
+    output?: string;
+    error?: string;
+  }>;
+  downloadFileWithProgress: (
+    remotePath: string,
+    localPath: string,
+    onProgress?: (percent: number) => void
+  ) => Promise<{
+    success: boolean;
+    filePath: string;
+    remotePath: string;
+    output?: string;
+    error?: string;
+  }>;
 }
 
 export interface MockCompressionService {
@@ -260,7 +278,21 @@ export function createMockInternxtService(): MockInternxtService {
       error: undefined
     })),
     fileExists: mock(() => Promise.resolve(false)),
-    deleteFile: mock(() => Promise.resolve(true))
+    deleteFile: mock(() => Promise.resolve(true)),
+    downloadFile: mock(() => Promise.resolve({
+      success: true,
+      filePath: '/local/path',
+      remotePath: '/remote/path',
+      output: 'Download successful',
+      error: undefined
+    })),
+    downloadFileWithProgress: mock(() => Promise.resolve({
+      success: true,
+      filePath: '/local/path',
+      remotePath: '/remote/path',
+      output: 'Download successful',
+      error: undefined
+    }))
   };
 }
 
@@ -307,6 +339,34 @@ export function createMockResumableUploader(): MockResumableUploader {
     getUploadProgress: mock(() => Promise.resolve(50)),
     canResume: mock(() => Promise.resolve(false)),
     clearState: mock(() => Promise.resolve())
+  };
+}
+
+// Restore Downloader Interfaces
+export interface MockRestoreDownloader {
+  downloadFile: (remotePath: string, localPath: string) => Promise<{
+    success: boolean;
+    filePath: string;
+    error?: string;
+  }>;
+  isFileUpToDate: (localPath: string, remoteSize: number) => Promise<boolean>;
+  getInternxtService: () => MockInternxtService;
+}
+
+/**
+ * Creates a standard mock RestoreDownloader
+ *
+ * @returns Mock RestoreDownloader
+ */
+export function createMockRestoreDownloader(): MockRestoreDownloader {
+  return {
+    downloadFile: mock(() => Promise.resolve({
+      success: true,
+      filePath: '/local/path',
+      error: undefined
+    })),
+    isFileUpToDate: mock(() => Promise.resolve(false)),
+    getInternxtService: createMockInternxtService
   };
 }
 

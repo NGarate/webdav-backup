@@ -63,5 +63,15 @@ describe('InternxtService', () => {
       const service = new InternxtService();
       expect(typeof service.deleteFile).toBe('function');
     });
+
+    it('should have downloadFile method', () => {
+      const service = new InternxtService();
+      expect(typeof service.downloadFile).toBe('function');
+    });
+
+    it('should have downloadFileWithProgress method', () => {
+      const service = new InternxtService();
+      expect(typeof service.downloadFileWithProgress).toBe('function');
+    });
   });
 });

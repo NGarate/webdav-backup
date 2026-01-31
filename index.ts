@@ -2,7 +2,7 @@
 
 /**
  * internxt-backup CLI
- * A simple, fast CLI for backing up files to Internxt Drive
+ * A simple, fast CLI for backing up and restoring files to/from Internxt Drive
  */
 
 import { parseArgs } from "node:util";
@@ -11,6 +11,7 @@ import chalk from "chalk";
 // Import the syncFiles function
 import { syncFiles, SyncOptions } from "./src/file-sync";
 import { BackupScheduler } from "./src/core/scheduler/scheduler";
+import { RestoreManager, RestoreOptions } from "./src/core/restore/restore-manager";
 
 // Get version from package.json using Bun's built-in functionality
 const packageJson = await Bun.file("package.json").json();
@@ -25,8 +26,6 @@ function parse() {
       "source": { type: "string" },
       "target": { type: "string" },
       "cores": { type: "string" },
-      "compress": { type: "boolean" },
-      "compression-level": { type: "string" },
 
       // Scheduling
       "schedule": { type: "string" },
@@ -50,23 +49,24 @@ function parse() {
 
   return {
     ...values,
-    sourceDir: positionals[0] || values.source
+    command: positionals[0],
+    positionalPath: positionals[1]
   };
 }
 
 // Display help information
 function showHelp() {
   console.log(`
-${chalk.bold(`Internxt Backup v${VERSION} - A simple CLI for backing up files to Internxt Drive`)}
+${chalk.bold(`Internxt Backup v${VERSION} - A simple CLI for backing up and restoring files`)}
 
-${chalk.bold(`Usage: internxt-backup <source-dir> [options]`)})
+${chalk.bold("Commands:")}
+  backup <source-dir>       Backup files to Internxt Drive
+  restore <remote-path>     Restore files from Internxt Drive to current directory
+  restore <remote-path> <destination>  Restore files to specific directory
 
-${chalk.bold("Options:")}
-  --source=<path>         Source directory to backup (can also be positional)
+${chalk.bold("Backup Options:")}
   --target=<path>         Target folder in Internxt Drive (default: root)
   --cores=<number>        Number of concurrent uploads (default: 2/3 of CPU cores)
-  --compress              Enable gzip compression before upload
-  --compression-level=<1-9> Compression level 1-9 (default: 6)
   --schedule=<cron>       Cron expression for scheduled backups (e.g., "0 2 * * *")
   --daemon                Run as a daemon with scheduled backups
   --force                 Force upload all files regardless of hash cache
@@ -74,21 +74,117 @@ ${chalk.bold("Options:")}
   --chunk-size=<mb>       Chunk size in MB for large files (default: 50)
   --quiet                 Show minimal output (only errors and progress)
   --verbose               Show detailed output including per-file operations
+
+${chalk.bold("Restore Options:")}
+  --target=<path>         Local destination path (default: current directory)
+  --cores=<number>        Number of concurrent downloads (default: 2/3 of CPU cores)
+  --force                 Force download all files regardless of local existence
+  --quiet                 Show minimal output (only errors and progress)
+  --verbose               Show detailed output including per-file operations
+
+${chalk.bold("Global Options:")}
   --help, -h              Show this help message
   --version, -v           Show version information
 
 ${chalk.bold("Examples:")}
-  internxt-backup /mnt/disk/Photos --target=/Backups/Photos
-  internxt-backup /mnt/disk/Documents --target=/Backups/Docs --compress
-  internxt-backup /mnt/disk/Important --target=/Backups --schedule="0 2 * * *" --daemon
-  internxt-backup /mnt/disk/Photos --target=/Backups/Photos --force
-  internxt-backup /mnt/disk/Photos --target=/Backups/Photos --cores=2 --resume
+  # Backup operations
+  internxt-backup backup /mnt/disk/Photos --target=/Backups/Photos
+  internxt-backup backup /mnt/disk/Documents --target=/Backups/Docs
+  internxt-backup backup /mnt/disk/Important --target=/Backups --schedule="0 2 * * *" --daemon
+
+  # Restore operations
+  internxt-backup restore /Backups/Photos
+  internxt-backup restore /Backups/Photos /mnt/recovered/Photos
+  internxt-backup restore /Backups/Docs --target=/home/user/Documents --force
 `);
 }
 
 // Show version information
 function showVersion() {
   console.log(`internxt-backup v${VERSION}`);
+}
+
+// Handle backup command
+async function handleBackup(args: any) {
+  const sourceDir = args.positionalPath || args.source;
+  
+  if (!sourceDir) {
+    console.error(chalk.red("Error: Source directory is required"));
+    console.log();
+    showHelp();
+    process.exit(1);
+  }
+
+  // Build sync options
+  const syncOptions: SyncOptions = {
+    cores: args.cores ? parseInt(args.cores) : undefined,
+    target: args.target,
+    quiet: args.quiet,
+    verbose: args.verbose,
+    force: args.force,
+    resume: args.resume,
+    chunkSize: args["chunk-size"] ? parseInt(args["chunk-size"]) : undefined
+  };
+
+  // Handle daemon mode with scheduling
+  if (args.daemon && args.schedule) {
+    console.log(chalk.blue(`Starting daemon mode with schedule: ${args.schedule}`));
+    const scheduler = new BackupScheduler();
+    await scheduler.startDaemon({
+      sourceDir,
+      schedule: args.schedule,
+      syncOptions
+    });
+    return;
+  }
+
+  // Run the main sync function with the parsed arguments
+  await syncFiles(sourceDir, syncOptions);
+}
+
+// Handle restore command
+async function handleRestore(args: any) {
+  const remotePath = args.positionalPath;
+  
+  if (!remotePath) {
+    console.error(chalk.red("Error: Remote path is required"));
+    console.log();
+    showHelp();
+    process.exit(1);
+  }
+
+  // Determine local destination
+  // If a second positional argument is provided, use it as destination
+  // Otherwise use --target or current directory
+  const destination = args.destination || args.target || ".";
+
+  // Build restore options
+  const restoreOptions: RestoreOptions = {
+    cores: args.cores ? parseInt(args.cores) : undefined,
+    force: args.force,
+    quiet: args.quiet,
+    verbose: args.verbose
+  };
+
+  console.log(chalk.blue(`Restoring from ${remotePath} to ${destination}...`));
+
+  const restoreManager = new RestoreManager(remotePath, destination, restoreOptions);
+  const result = await restoreManager.restore();
+
+  if (result.success) {
+    console.log(chalk.green(`\nRestore completed successfully!`));
+    console.log(`  Total files: ${result.totalFiles}`);
+    console.log(`  Downloaded: ${result.downloaded}`);
+    console.log(`  Skipped: ${result.skipped}`);
+    console.log(`  Failed: ${result.failed}`);
+  } else {
+    console.log(chalk.yellow(`\nRestore completed with errors.`));
+    console.log(`  Total files: ${result.totalFiles}`);
+    console.log(`  Downloaded: ${result.downloaded}`);
+    console.log(`  Skipped: ${result.skipped}`);
+    console.log(`  Failed: ${result.failed}`);
+    process.exit(1);
+  }
 }
 
 // Main function
@@ -118,41 +214,29 @@ async function main() {
     // Parse CLI arguments
     const args = parse();
 
-    // Check for required source directory
-    if (!args.sourceDir) {
-      console.error(chalk.red("Error: Source directory is required"));
-      console.log();
-      showHelp();
-      process.exit(1);
+    // Route to appropriate command handler
+    switch (args.command) {
+      case "backup":
+        await handleBackup(args);
+        break;
+      
+      case "restore":
+        await handleRestore(args);
+        break;
+      
+      default:
+        // For backward compatibility, treat unknown command as backup with positional path
+        if (args.command && !args.command.startsWith("--")) {
+          args.source = args.command;
+          args.positionalPath = args.command;
+          await handleBackup(args);
+        } else {
+          console.error(chalk.red(`Error: Unknown command "${args.command}"`));
+          console.log();
+          showHelp();
+          process.exit(1);
+        }
     }
-
-    // Build sync options
-    const syncOptions: SyncOptions = {
-      cores: args.cores ? parseInt(args.cores) : undefined,
-      target: args.target,
-      quiet: args.quiet,
-      verbose: args.verbose,
-      force: args.force,
-      compress: args.compress,
-      compressionLevel: args["compression-level"] ? parseInt(args["compression-level"]) : undefined,
-      resume: args.resume,
-      chunkSize: args["chunk-size"] ? parseInt(args["chunk-size"]) : undefined
-    };
-
-    // Handle daemon mode with scheduling
-    if (args.daemon && args.schedule) {
-      console.log(chalk.blue(`Starting daemon mode with schedule: ${args.schedule}`));
-      const scheduler = new BackupScheduler();
-      await scheduler.startDaemon({
-        sourceDir: args.sourceDir,
-        schedule: args.schedule,
-        syncOptions
-      });
-      return;
-    }
-
-    // Run the main sync function with the parsed arguments
-    await syncFiles(args.sourceDir, syncOptions);
 
   } catch (error: any) {
     console.error(chalk.red(`Error: ${error.message}`));

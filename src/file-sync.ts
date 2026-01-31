@@ -18,8 +18,6 @@ export interface SyncOptions {
   quiet?: boolean;
   verbose?: boolean;
   force?: boolean;
-  compress?: boolean;
-  compressionLevel?: number;
   resume?: boolean;
   chunkSize?: number;
 }
@@ -72,8 +70,6 @@ export async function syncFiles(sourceDir: string, options: SyncOptions): Promis
       options.target || "/",
       verbosity,
       {
-        compress: options.compress,
-        compressionLevel: options.compressionLevel,
         resume: options.resume,
         chunkSize: options.chunkSize
       }
