@@ -1,53 +1,56 @@
 /**
- * Tests for BackupScheduler
+ * Tests for BackupScheduler functional exports
  */
 
 import { expect, describe, it } from 'bun:test';
-import { BackupScheduler, BackupConfig } from './scheduler';
+import {
+  initBackupScheduler,
+  runBackupOnce,
+  stopBackupJob,
+  stopAllBackupJobs,
+  getBackupJobInfo,
+  scheduleDelayedBackup,
+  startBackupDaemon,
+  BackupConfig
+} from './scheduler';
 import { Verbosity } from '../../interfaces/logger';
 
 describe('BackupScheduler', () => {
-  describe('constructor', () => {
+  describe('initialization', () => {
     it('should initialize with default options', () => {
-      const scheduler = new BackupScheduler();
-      expect(scheduler).toBeDefined();
+      initBackupScheduler();
+      expect(typeof startBackupDaemon).toBe('function');
     });
 
     it('should initialize with custom verbosity', () => {
-      const scheduler = new BackupScheduler({ verbosity: Verbosity.Verbose });
-      expect(scheduler).toBeDefined();
+      initBackupScheduler(Verbosity.Verbose);
+      expect(typeof startBackupDaemon).toBe('function');
     });
   });
 
   describe('interface', () => {
-    it('should have startDaemon method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.startDaemon).toBe('function');
+    it('should export startBackupDaemon function', () => {
+      expect(typeof startBackupDaemon).toBe('function');
     });
 
-    it('should have runOnce method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.runOnce).toBe('function');
+    it('should export runBackupOnce function', () => {
+      expect(typeof runBackupOnce).toBe('function');
     });
 
-    it('should have stopJob method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.stopJob).toBe('function');
+    it('should export stopBackupJob function', () => {
+      expect(typeof stopBackupJob).toBe('function');
     });
 
-    it('should have stopAll method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.stopAll).toBe('function');
+    it('should export stopAllBackupJobs function', () => {
+      expect(typeof stopAllBackupJobs).toBe('function');
     });
 
-    it('should have getJobInfo method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.getJobInfo).toBe('function');
+    it('should export getBackupJobInfo function', () => {
+      expect(typeof getBackupJobInfo).toBe('function');
     });
 
-    it('should have runDelayed method', () => {
-      const scheduler = new BackupScheduler();
-      expect(typeof scheduler.runDelayed).toBe('function');
+    it('should export scheduleDelayedBackup function', () => {
+      expect(typeof scheduleDelayedBackup).toBe('function');
     });
   });
 
@@ -58,8 +61,8 @@ describe('BackupScheduler', () => {
         schedule: '0 2 * * *',
         syncOptions: {
           target: '/backup',
-          compress: true,
-          cores: 4
+          cores: 4,
+          verbose: true
         }
       };
 
