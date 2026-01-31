@@ -1,477 +1,293 @@
 /**
- * Internxt CLI Service
+ * Internxt CLI Service - Functional exports
  * Wraps the Internxt CLI for backup operations
  */
 
 import { spawn, exec } from "node:child_process";
 import { promisify } from "node:util";
-import * as logger from "../../utils/logger";
+import * as logger from "../../utils/logger.js";
 import {
   InternxtCLICheckResult,
   InternxtUploadResult,
   InternxtFolderResult,
   InternxtListResult,
-  InternxtFileInfo,
-  InternxtServiceOptions
-} from "../../interfaces/internxt";
+  InternxtFileInfo
+} from "../../interfaces/internxt.js";
 
 const execAsync = promisify(exec);
 
-export class InternxtService {
-  private verbosity: number;
+let _verbosity = logger.Verbosity.Normal;
 
-  constructor(options: InternxtServiceOptions = {}) {
-    this.verbosity = options.verbosity ?? logger.Verbosity.Normal;
-  }
+export const initInternxtService = (verbosity: number = logger.Verbosity.Normal): void => {
+  _verbosity = verbosity;
+};
 
-  /**
-   * Check if Internxt CLI is installed and authenticated
-   */
-  async checkCLI(): Promise<InternxtCLICheckResult> {
-    try {
-      // Check if internxt command exists
-      const { stdout: versionOutput } = await execAsync("internxt --version").catch(() => ({ stdout: "" }));
-      const version = versionOutput.trim();
+const log = (msg: string): void => logger.verbose(msg, _verbosity);
 
-      if (!version) {
-        return {
-          installed: false,
-          authenticated: false,
-          error: "Internxt CLI not found. Please install it with: npm install -g @internxt/cli"
-        };
-      }
+export const checkInternxtCLI = async (): Promise<InternxtCLICheckResult> => {
+  try {
+    const { stdout: versionOutput } = await execAsync("internxt --version").catch(() => ({ stdout: "" }));
+    const version = versionOutput.trim();
 
-      // Check if authenticated by trying to list files
-      try {
-        await execAsync("internxt list-files /");
-        return {
-          installed: true,
-          authenticated: true,
-          version
-        };
-      } catch (authError) {
-        return {
-          installed: true,
-          authenticated: false,
-          version,
-          error: "Not authenticated. Please run: internxt login"
-        };
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    if (!version) {
       return {
         installed: false,
         authenticated: false,
-        error: `Failed to check Internxt CLI: ${errorMessage}`
+        error: "Internxt CLI not found. Please install it with: npm install -g @internxt/cli"
       };
     }
-  }
 
-  /**
-   * Upload a file to Internxt Drive
-   */
-  async uploadFile(localPath: string, remotePath: string): Promise<InternxtUploadResult> {
     try {
-      logger.verbose(`Uploading ${localPath} to ${remotePath}`, this.verbosity);
+      await execAsync("internxt list-files /");
+      return { installed: true, authenticated: true, version };
+    } catch {
+      return {
+        installed: true,
+        authenticated: false,
+        version,
+        error: "Not authenticated. Please run: internxt login"
+      };
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return {
+      installed: false,
+      authenticated: false,
+      error: `Failed to check Internxt CLI: ${msg}`
+    };
+  }
+};
 
-      // Ensure the parent folder exists
+export const internxtUploadFile = async (localPath: string, remotePath: string): Promise<InternxtUploadResult> => {
+  try {
+    log(`Uploading ${localPath} to ${remotePath}`);
+
+    const lastSlashIndex = remotePath.lastIndexOf("/");
+    if (lastSlashIndex > 0) {
+      const folderPath = remotePath.substring(0, lastSlashIndex);
+      await internxtCreateFolder(folderPath);
+    }
+
+    const { stdout, stderr } = await execAsync(`internxt upload-file "${localPath}" "${remotePath}"`);
+    const output = stdout || stderr;
+
+    if (output.toLowerCase().includes("error") || output.toLowerCase().includes("failed")) {
+      return { success: false, filePath: localPath, remotePath, output, error: output };
+    }
+
+    return { success: true, filePath: localPath, remotePath, output };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, filePath: localPath, remotePath, error: msg };
+  }
+};
+
+export const internxtUploadFileWithProgress = async (
+  localPath: string,
+  remotePath: string,
+  onProgress?: (percent: number) => void
+): Promise<InternxtUploadResult> => {
+  return new Promise(async (resolve) => {
+    try {
+      log(`Uploading with progress: ${localPath} to ${remotePath}`);
+
       const lastSlashIndex = remotePath.lastIndexOf("/");
       if (lastSlashIndex > 0) {
         const folderPath = remotePath.substring(0, lastSlashIndex);
-        await this.createFolder(folderPath);
+        await internxtCreateFolder(folderPath).catch(() => {});
       }
 
-      // Upload the file using Internxt CLI
-      const { stdout, stderr } = await execAsync(
-        `internxt upload-file "${localPath}" "${remotePath}"`
-      );
+      const child = spawn("internxt", ["upload-file", localPath, remotePath], {
+        stdio: ["ignore", "pipe", "pipe"]
+      });
 
-      const output = stdout || stderr;
+      let output = "";
+      let errorOutput = "";
 
-      if (output.toLowerCase().includes("error") || output.toLowerCase().includes("failed")) {
-        return {
-          success: false,
-          filePath: localPath,
-          remotePath,
-          output,
-          error: output
-        };
-      }
-
-      return {
-        success: true,
-        filePath: localPath,
-        remotePath,
-        output
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        filePath: localPath,
-        remotePath,
-        error: errorMessage
-      };
-    }
-  }
-
-  /**
-   * Upload a file with progress tracking using streaming
-   * This is better for large files
-   */
-  async uploadFileWithProgress(
-    localPath: string,
-    remotePath: string,
-    onProgress?: (percent: number) => void
-  ): Promise<InternxtUploadResult> {
-    return new Promise(async (resolve) => {
-      try {
-        logger.verbose(`Uploading with progress: ${localPath} to ${remotePath}`, this.verbosity);
-
-        // Ensure the parent folder exists
-        const lastSlashIndex = remotePath.lastIndexOf("/");
-        if (lastSlashIndex > 0) {
-          const folderPath = remotePath.substring(0, lastSlashIndex);
-          await this.createFolder(folderPath);
+      child.stdout.on("data", (data) => {
+        const chunk = data.toString();
+        output += chunk;
+        const progressMatch = chunk.match(/(\d+)%/);
+        if (progressMatch && onProgress) {
+          onProgress(parseInt(progressMatch[1], 10));
         }
+      });
 
-        // Use spawn for streaming output
-        const child = spawn("internxt", ["upload-file", localPath, remotePath], {
-          stdio: ["ignore", "pipe", "pipe"]
-        });
+      child.stderr.on("data", (data) => {
+        errorOutput += data.toString();
+      });
 
-        let output = "";
-        let errorOutput = "";
+      child.on("close", (code) => {
+        const fullOutput = output + errorOutput;
+        if (code === 0 && !fullOutput.toLowerCase().includes("error")) {
+          resolve({ success: true, filePath: localPath, remotePath, output: fullOutput });
+        } else {
+          resolve({ success: false, filePath: localPath, remotePath, output: fullOutput, error: fullOutput || `Exit ${code}` });
+        }
+      });
 
-        child.stdout.on("data", (data) => {
-          const chunk = data.toString();
-          output += chunk;
-
-          // Try to parse progress from output
-          // Internxt CLI may output progress in different formats
-          const progressMatch = chunk.match(/(\d+)%/);
-          if (progressMatch && onProgress) {
-            const percent = parseInt(progressMatch[1], 10);
-            onProgress(percent);
-          }
-        });
-
-        child.stderr.on("data", (data) => {
-          errorOutput += data.toString();
-        });
-
-        child.on("close", (code) => {
-          const fullOutput = output + errorOutput;
-
-          if (code === 0 && !fullOutput.toLowerCase().includes("error")) {
-            resolve({
-              success: true,
-              filePath: localPath,
-              remotePath,
-              output: fullOutput
-            });
-          } else {
-            resolve({
-              success: false,
-              filePath: localPath,
-              remotePath,
-              output: fullOutput,
-              error: fullOutput || `Process exited with code ${code}`
-            });
-          }
-        });
-
-        child.on("error", (error: Error) => {
-          resolve({
-            success: false,
-            filePath: localPath,
-            remotePath,
-            error: error.message
-          });
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        resolve({
-          success: false,
-          filePath: localPath,
-          remotePath,
-          error: errorMessage
-        });
-      }
-    });
-  }
-
-  /**
-   * Create a folder in Internxt Drive
-   */
-  async createFolder(remotePath: string): Promise<InternxtFolderResult> {
-    try {
-      logger.verbose(`Creating folder: ${remotePath}`, this.verbosity);
-
-      const { stdout, stderr } = await execAsync(
-        `internxt create-folder "${remotePath}"`
-      );
-
-      const output = stdout || stderr;
-
-      // Folder might already exist, which is fine
-      if (output.toLowerCase().includes("error") &&
-          !output.toLowerCase().includes("already exists")) {
-        return {
-          success: false,
-          path: remotePath,
-          output,
-          error: output
-        };
-      }
-
-      return {
-        success: true,
-        path: remotePath,
-        output
-      };
+      child.on("error", (error: Error) => {
+        resolve({ success: false, filePath: localPath, remotePath, error: error.message });
+      });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      // Check if it's "already exists" error
-      if (errorMessage.toLowerCase().includes("already exists")) {
-        return {
-          success: true,
-          path: remotePath,
-          output: "Folder already exists"
-        };
-      }
+      const msg = error instanceof Error ? error.message : String(error);
+      resolve({ success: false, filePath: localPath, remotePath, error: msg });
+    }
+  });
+};
 
-      return {
-        success: false,
-        path: remotePath,
-        error: errorMessage
-      };
+export const internxtCreateFolder = async (remotePath: string): Promise<InternxtFolderResult> => {
+  try {
+    log(`Creating folder: ${remotePath}`);
+
+    const { stdout, stderr } = await execAsync(`internxt create-folder "${remotePath}"`);
+    const output = stdout || stderr;
+
+    if (output.toLowerCase().includes("error") && !output.toLowerCase().includes("already exists")) {
+      return { success: false, path: remotePath, output, error: output };
+    }
+
+    return { success: true, path: remotePath, output };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    if (msg.toLowerCase().includes("already exists")) {
+      return { success: true, path: remotePath, output: "Folder already exists" };
+    }
+    return { success: false, path: remotePath, error: msg };
+  }
+};
+
+const parseTextListOutput = (output: string, parentPath: string): InternxtFileInfo[] => {
+  const files: InternxtFileInfo[] = [];
+  const lines = output.split("\n").filter(line => line.trim());
+
+  for (const line of lines) {
+    const match = line.match(/^(.+?)\s+(\d+)\s*bytes?$/i);
+    if (match) {
+      files.push({
+        name: match[1].trim(),
+        path: parentPath === "/" ? `/${match[1].trim()}` : `${parentPath}/${match[1].trim()}`,
+        size: parseInt(match[2], 10),
+        isFolder: false
+      });
+    } else if (line.endsWith("/")) {
+      const folderName = line.slice(0, -1);
+      files.push({
+        name: folderName,
+        path: parentPath === "/" ? `/${folderName}` : `${parentPath}/${folderName}`,
+        size: 0,
+        isFolder: true
+      });
     }
   }
 
-  /**
-   * List files in a remote folder
-   */
-  async listFiles(remotePath: string = "/"): Promise<InternxtListResult> {
+  return files;
+};
+
+export const internxtListFiles = async (remotePath: string = "/"): Promise<InternxtListResult> => {
+  try {
+    log(`Listing files in: ${remotePath}`);
+
+    const { stdout } = await execAsync(`internxt list-files "${remotePath}" --format=json`);
+
+    let files: InternxtFileInfo[] = [];
     try {
-      logger.verbose(`Listing files in: ${remotePath}`, this.verbosity);
-
-      const { stdout } = await execAsync(
-        `internxt list-files "${remotePath}" --format=json`
-      );
-
-      // Try to parse JSON output
-      let files: InternxtFileInfo[] = [];
-      try {
-        const parsed = JSON.parse(stdout);
-        files = Array.isArray(parsed) ? parsed : [parsed];
-      } catch {
-        // If JSON parsing fails, try to parse text output
-        files = this.parseTextListOutput(stdout, remotePath);
-      }
-
-      return {
-        success: true,
-        files
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        files: [],
-        error: errorMessage
-      };
-    }
-  }
-
-  /**
-   * Parse text output from list-files command
-   */
-  private parseTextListOutput(output: string, parentPath: string): InternxtFileInfo[] {
-    const files: InternxtFileInfo[] = [];
-    const lines = output.split("\n").filter(line => line.trim());
-
-    for (const line of lines) {
-      // Try to parse common formats
-      // Example: "filename.txt 1234 bytes"
-      const match = line.match(/^(.+?)\s+(\d+)\s*bytes?$/i);
-      if (match) {
-        files.push({
-          name: match[1].trim(),
-          path: parentPath === "/" ? `/${match[1].trim()}` : `${parentPath}/${match[1].trim()}`,
-          size: parseInt(match[2], 10),
-          isFolder: false
-        });
-      } else if (line.endsWith("/")) {
-        // Likely a folder
-        const folderName = line.slice(0, -1);
-        files.push({
-          name: folderName,
-          path: parentPath === "/" ? `/${folderName}` : `${parentPath}/${folderName}`,
-          size: 0,
-          isFolder: true
-        });
-      }
+      const parsed = JSON.parse(stdout);
+      files = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+      files = parseTextListOutput(stdout, remotePath);
     }
 
-    return files;
+    return { success: true, files };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, files: [], error: msg };
   }
+};
 
-  /**
-   * Check if a file exists in Internxt Drive
-   */
-  async fileExists(remotePath: string): Promise<boolean> {
-    const parentPath = remotePath.substring(0, remotePath.lastIndexOf("/")) || "/";
-    const fileName = remotePath.substring(remotePath.lastIndexOf("/") + 1);
+export const internxtFileExists = async (remotePath: string): Promise<boolean> => {
+  const parentPath = remotePath.substring(0, remotePath.lastIndexOf("/")) || "/";
+  const fileName = remotePath.substring(remotePath.lastIndexOf("/") + 1);
 
-    const listResult = await this.listFiles(parentPath);
-    if (!listResult.success) {
-      return false;
+  const listResult = await internxtListFiles(parentPath);
+  if (!listResult.success) return false;
+
+  return listResult.files.some(f => f.name === fileName);
+};
+
+export const internxtDeleteFile = async (remotePath: string): Promise<boolean> => {
+  try {
+    log(`Deleting file: ${remotePath}`);
+    await execAsync(`internxt delete "${remotePath}" --permanent`);
+    return true;
+  } catch (error) {
+    log(`Failed to delete: ${error}`);
+    return false;
+  }
+};
+
+export const internxtDownloadFile = async (remotePath: string, localPath: string): Promise<InternxtUploadResult> => {
+  try {
+    log(`Downloading ${remotePath} to ${localPath}`);
+
+    const { stdout, stderr } = await execAsync(`internxt download-file "${remotePath}" "${localPath}"`);
+    const output = stdout || stderr;
+
+    if (output.toLowerCase().includes("error") || output.toLowerCase().includes("failed")) {
+      return { success: false, filePath: localPath, remotePath, output, error: output };
     }
 
-    return listResult.files.some(f => f.name === fileName);
+    return { success: true, filePath: localPath, remotePath, output };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { success: false, filePath: localPath, remotePath, error: msg };
   }
+};
 
-  /**
-   * Delete a file from Internxt Drive
-   */
-  async deleteFile(remotePath: string): Promise<boolean> {
+export const internxtDownloadFileWithProgress = async (
+  remotePath: string,
+  localPath: string,
+  onProgress?: (percent: number) => void
+): Promise<InternxtUploadResult> => {
+  return new Promise((resolve) => {
     try {
-      logger.verbose(`Deleting file: ${remotePath}`, this.verbosity);
+      log(`Downloading with progress: ${remotePath} to ${localPath}`);
 
-      await execAsync(`internxt delete "${remotePath}" --permanent`);
-      return true;
+      const child = spawn("internxt", ["download-file", remotePath, localPath], {
+        stdio: ["ignore", "pipe", "pipe"]
+      });
+
+      let output = "";
+      let errorOutput = "";
+
+      child.stdout.on("data", (data) => {
+        const chunk = data.toString();
+        output += chunk;
+        const progressMatch = chunk.match(/(\d+)%/);
+        if (progressMatch && onProgress) {
+          onProgress(parseInt(progressMatch[1], 10));
+        }
+      });
+
+      child.stderr.on("data", (data) => {
+        errorOutput += data.toString();
+      });
+
+      child.on("close", (code) => {
+        const fullOutput = output + errorOutput;
+        if (code === 0 && !fullOutput.toLowerCase().includes("error")) {
+          resolve({ success: true, filePath: localPath, remotePath, output: fullOutput });
+        } else {
+          resolve({ success: false, filePath: localPath, remotePath, output: fullOutput, error: fullOutput || `Exit ${code}` });
+        }
+      });
+
+      child.on("error", (error: Error) => {
+        resolve({ success: false, filePath: localPath, remotePath, error: error.message });
+      });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.verbose(`Failed to delete file: ${errorMessage}`, this.verbosity);
-      return false;
+      const msg = error instanceof Error ? error.message : String(error);
+      resolve({ success: false, filePath: localPath, remotePath, error: msg });
     }
-  }
-
-  /**
-   * Download a file from Internxt Drive
-   * @param remotePath - Path to the file in Internxt Drive
-   * @param localPath - Local destination path
-   * @returns Download result with success status
-   */
-  async downloadFile(remotePath: string, localPath: string): Promise<InternxtUploadResult> {
-    try {
-      logger.verbose(`Downloading ${remotePath} to ${localPath}`, this.verbosity);
-
-      // Download the file using Internxt CLI
-      const { stdout, stderr } = await execAsync(
-        `internxt download-file "${remotePath}" "${localPath}"`
-      );
-
-      const output = stdout || stderr;
-
-      if (output.toLowerCase().includes("error") || output.toLowerCase().includes("failed")) {
-        return {
-          success: false,
-          filePath: localPath,
-          remotePath,
-          output,
-          error: output
-        };
-      }
-
-      return {
-        success: true,
-        filePath: localPath,
-        remotePath,
-        output
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      return {
-        success: false,
-        filePath: localPath,
-        remotePath,
-        error: errorMessage
-      };
-    }
-  }
-
-  /**
-   * Download a file with progress tracking using streaming
-   * @param remotePath - Path to the file in Internxt Drive
-   * @param localPath - Local destination path
-   * @param onProgress - Callback for progress updates
-   * @returns Download result with success status
-   */
-  async downloadFileWithProgress(
-    remotePath: string,
-    localPath: string,
-    onProgress?: (percent: number) => void
-  ): Promise<InternxtUploadResult> {
-    return new Promise((resolve) => {
-      try {
-        logger.verbose(`Downloading with progress: ${remotePath} to ${localPath}`, this.verbosity);
-
-        // Use spawn for streaming output
-        const child = spawn("internxt", ["download-file", remotePath, localPath], {
-          stdio: ["ignore", "pipe", "pipe"]
-        });
-
-        let output = "";
-        let errorOutput = "";
-
-        child.stdout.on("data", (data) => {
-          const chunk = data.toString();
-          output += chunk;
-
-          // Try to parse progress from output
-          const progressMatch = chunk.match(/(\d+)%/);
-          if (progressMatch && onProgress) {
-            const percent = parseInt(progressMatch[1], 10);
-            onProgress(percent);
-          }
-        });
-
-        child.stderr.on("data", (data) => {
-          errorOutput += data.toString();
-        });
-
-        child.on("close", (code) => {
-          const fullOutput = output + errorOutput;
-
-          if (code === 0 && !fullOutput.toLowerCase().includes("error")) {
-            resolve({
-              success: true,
-              filePath: localPath,
-              remotePath,
-              output: fullOutput
-            });
-          } else {
-            resolve({
-              success: false,
-              filePath: localPath,
-              remotePath,
-              output: fullOutput,
-              error: fullOutput || `Process exited with code ${code}`
-            });
-          }
-        });
-
-        child.on("error", (error: Error) => {
-          resolve({
-            success: false,
-            filePath: localPath,
-            remotePath,
-            error: error.message
-          });
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        resolve({
-          success: false,
-          filePath: localPath,
-          remotePath,
-          error: errorMessage
-        });
-      }
-    });
-  }
-}
-
-export default InternxtService;
+  });
+};
