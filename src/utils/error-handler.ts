@@ -7,11 +7,10 @@ export interface ErrorResult {
 
 export const handleError = (
   error: unknown,
-  context: string,
-  verbosity?: number
+  context: string
 ): ErrorResult => {
   const msg = error instanceof Error ? error.message : String(error);
-  logger.error(`${context}: ${msg}`, verbosity);
+  logger.error(`${context}: ${msg}`);
   return { success: false, error: msg };
 };
 
