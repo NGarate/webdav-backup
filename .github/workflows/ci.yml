@@ -11,9 +11,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  NODE_VERSION: '20'
-
 jobs:
   lint:
     name: Lint
@@ -21,15 +18,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -48,15 +45,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -76,15 +73,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -98,7 +95,7 @@ jobs:
         run: bun test --coverage
 
       - name: Upload coverage
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f634d7f0681a4994af1d93b6d89e1c6c # v4.6.0
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         with:
           files: ./coverage/lcov.info
@@ -110,15 +107,15 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -152,21 +149,27 @@ jobs:
           - os: macos-latest
             target: bun-darwin-arm64
             artifact: internxt-backup-macos-arm64
+          - os: ubuntu-latest
+            target: bun-linux-x64-musl
+            artifact: internxt-backup-linux-x64-musl
+          - os: ubuntu-latest
+            target: bun-linux-arm64-musl
+            artifact: internxt-backup-linux-arm64-musl
           - os: windows-latest
             target: bun-windows-x64
             artifact: internxt-backup-windows-x64.exe
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ matrix.target }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -182,16 +185,24 @@ jobs:
       - name: Test executable
         shell: bash
         run: |
+          set -euo pipefail
+          
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            ./dist/${{ matrix.artifact }} --version || echo "Windows executable test skipped"
+            # Test Windows executable - these should succeed
+            ./dist/${{ matrix.artifact }} --version
+            ./dist/${{ matrix.artifact }} --help
           else
             chmod +x ./dist/${{ matrix.artifact }}
-            ./dist/${{ matrix.artifact }} --version || echo "Version flag test"
-            ./dist/${{ matrix.artifact }} --help || echo "Help flag test"
+            # Test Unix executables - failures will cause step to fail
+            echo "Testing --version flag..."
+            ./dist/${{ matrix.artifact }} --version
+            echo "Testing --help flag..."
+            ./dist/${{ matrix.artifact }} --help
+            echo "Executable tests passed!"
           fi
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.0
         with:
           name: ${{ matrix.artifact }}
           path: ./dist/${{ matrix.artifact }}

@@ -28,28 +28,44 @@ jobs:
     steps:
       - name: Get tag from push event
         if: github.event_name == 'push'
-        id: push-tag
+        id: get-tag
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          echo "tag=$REF_NAME" >> $GITHUB_OUTPUT
           echo "should_build=true" >> $GITHUB_OUTPUT
 
       - name: Get tag from workflow_run event
         if: github.event_name == 'workflow_run'
-        id: workflow-tag
+        id: get-tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          WORKFLOW_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           # Only proceed if the triggering workflow was successful
-          if [ "${{ github.event.workflow_run.conclusion }}" != "success" ]; then
+          if [[ "$WORKFLOW_CONCLUSION" != "success" ]]; then
             echo "Semantic release workflow did not succeed, skipping build"
             echo "should_build=false" >> $GITHUB_OUTPUT
             exit 0
           fi
 
-          # Get the latest release to find the tag
-          LATEST_RELEASE=$(gh api repos/${{ github.repository }}/releases/latest 2>/dev/null || echo "")
+          # Get the latest release to find the tag (with retry logic)
+          # Configuration
+          MAX_RETRIES=3
+          RETRY_DELAY=5
+          MAX_RELEASE_AGE_SECONDS=600  # 10 minutes
           
-          if [ -z "$LATEST_RELEASE" ] || [ "$LATEST_RELEASE" == "" ]; then
+          # Get the latest release with retry logic
+          LATEST_RELEASE=""
+          for i in $(seq 1 $MAX_RETRIES); do
+            LATEST_RELEASE=$(gh api repos/"$REPOSITORY"/releases/latest 2>&1) && break
+            echo "Attempt $i failed, waiting ${RETRY_DELAY}s before retry..."
+            sleep $RETRY_DELAY
+            RETRY_DELAY=$((RETRY_DELAY * 2))
+          done
+          
+          if [[ -z "$LATEST_RELEASE" ]] || [[ "$LATEST_RELEASE" == "" ]]; then
             echo "No release found, skipping build"
             echo "should_build=false" >> $GITHUB_OUTPUT
             exit 0
@@ -59,12 +75,12 @@ jobs:
           CREATED_AT=$(echo "$LATEST_RELEASE" | jq -r '.created_at')
           
           # Check if the release was created within the last 10 minutes (to avoid rebuilding old releases)
-          RELEASE_TIME=$(date -d "$CREATED_AT" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$CREATED_AT" +%s)
+          RELEASE_TIME=$(date -d "$CREATED_AT" +%s)
           NOW=$(date +%s)
           AGE=$((NOW - RELEASE_TIME))
           
-          if [ $AGE -gt 600 ]; then
-            echo "Latest release is older than 10 minutes ($AGE seconds), skipping build"
+          if [[ $AGE -gt $MAX_RELEASE_AGE_SECONDS ]]; then
+            echo "Latest release is older than $MAX_RELEASE_AGE_SECONDS seconds ($AGE seconds), skipping build"
             echo "should_build=false" >> $GITHUB_OUTPUT
             exit 0
           fi
@@ -72,17 +88,6 @@ jobs:
           echo "Found recent release: $TAG (created $AGE seconds ago)"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
           echo "should_build=true" >> $GITHUB_OUTPUT
-
-      - name: Set outputs
-        id: get-tag
-        run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            echo "tag=${{ steps.push-tag.outputs.tag }}" >> $GITHUB_OUTPUT
-            echo "should_build=${{ steps.push-tag.outputs.should_build }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=${{ steps.workflow-tag.outputs.tag }}" >> $GITHUB_OUTPUT
-            echo "should_build=${{ steps.workflow-tag.outputs.should_build }}" >> $GITHUB_OUTPUT
-          fi
 
   build-and-release:
     name: Build and Release
@@ -110,25 +115,37 @@ jobs:
             target: bun-darwin-arm64
             artifact: internxt-backup-macos-arm64
             platform_name: macOS ARM64 (Apple Silicon)
+          - os: ubuntu-latest
+            target: bun-linux-x64-musl
+            artifact: internxt-backup-linux-x64-musl
+            platform_name: Linux x64 (musl/Alpine)
+          - os: ubuntu-latest
+            target: bun-linux-arm64-musl
+            artifact: internxt-backup-linux-arm64-musl
+            platform_name: Linux ARM64 (musl/Alpine)
           - os: windows-latest
             target: bun-windows-x64
             artifact: internxt-backup-windows-x64.exe
             platform_name: Windows x64
+          # Note: Windows ARM64 is not yet supported by Bun
+          # - os: windows-latest
+          #   target: bun-windows-arm64
+          #   artifact: internxt-backup-windows-arm64.exe
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
       - name: Cache dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ matrix.target }}-bun-${{ hashFiles('**/bun.lock') }}
@@ -160,7 +177,7 @@ jobs:
           fi
 
       - name: Upload release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@95b537ca1fd46a9f3b9aaf206c24e7711f6ef1bd # v2.2.0
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           files: ./release/${{ matrix.artifact }}.*
@@ -177,13 +194,13 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ needs.prepare.outputs.tag }}
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@4bc047ad259df6fc24a6c9b0f9a0cb08cf17fbe5 # v2.0.1
         with:
           bun-version: latest
 
@@ -192,8 +209,10 @@ jobs:
 
       - name: Get CHANGELOG entry
         id: changelog
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          VERSION=${{ needs.prepare.outputs.tag }}
+          VERSION=$RELEASE_TAG
           VERSION=${VERSION#v}  # Remove 'v' prefix to match changelog format (e.g., v1.0.0 -> 1.0.0)
           # Extract changelog entry for this version
           CHANGELOG=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | head -n -1)
@@ -202,7 +221,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Update release notes
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@95b537ca1fd46a9f3b9aaf206c24e7711f6ef1bd # v2.2.0
         with:
           tag_name: ${{ needs.prepare.outputs.tag }}
           body: |

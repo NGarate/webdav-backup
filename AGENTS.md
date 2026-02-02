@@ -12,7 +12,7 @@ This file contains essential information for AI coding agents working on the **i
 - **Version**: 0.4.0
 - **License**: MIT
 - **Author**: ngarate
-- **Runtime**: Bun (≥1.0.0)
+- **Runtime**: Bun (≥1.3.8)
 - **Module Type**: ESM (`"type": "module"`)
 
 ---
@@ -38,7 +38,7 @@ This file contains essential information for AI coding agents working on the **i
 
 **Development:**
 
-- `typescript` (^5.8.3)
+- `typescript` (^5.9.3)
 - `bun-types` (^1.3.8)
 - `@types/jest` (^30.0.0)
 
@@ -291,6 +291,48 @@ Uses **semantic-release** with Conventional Commits:
    - Uploads to GitHub Releases
    - Updates release notes with changelog
 
+### CI/CD Workflow Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              PUSH TO MAIN BRANCH                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                      │
+              ┌───────────────────────┼───────────────────────┐
+              ▼                       ▼                       ▼
+    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐
+    │   CI Pipeline   │    │  Semantic       │    │   Release (triggered    │
+    │   (ci.yml)      │    │  Release        │    │   by workflow_run)      │
+    │                 │    │  (semantic-     │    │   (release.yml)         │
+    │ • Lint          │    │  release.yml)   │    │                         │
+    │ • Type Check    │    │                 │    │ • Prepare (get tag)     │
+    │ • Test          │    │ • Analyze       │    │ • Build Matrix          │
+    │ • Security      │    │   commits       │    │   (5 platforms)         │
+    │ • Build Check   │    │ • Bump version  │    │ • Upload Assets         │
+    └─────────────────┘    │ • Update        │    │ • Update Release        │
+                           │   CHANGELOG     │    │   Notes                 │
+                           │ • Create tag    │    └─────────────────────────┘
+                           │ • Create        │                │
+                           │   release       │                ▼
+                           └─────────────────┘    ┌─────────────────────────┐
+                                      │           │   GitHub Release        │
+                                      ▼           │   with Assets           │
+                           ┌─────────────────┐    └─────────────────────────┘
+                           │   Git Tag +     │
+                           │   GitHub        │
+                           │   Release       │
+                           └─────────────────┘
+                                      │
+                                      ▼
+                           ┌─────────────────┐
+                           │  workflow_run   │
+                           │  trigger fires  │
+                           └─────────────────┘
+```
+
+**Note**: The Release workflow uses `workflow_run` trigger because `GITHUB_TOKEN`
+creates releases that cannot trigger other workflows directly (GitHub security feature).
+
 ### Publishing to npm
 
 ```bash
@@ -381,7 +423,7 @@ The application validates CLI presence and authentication on startup.
 
 - Main: `index.ts`
 - Binary: `./dist/bin/index.js`
-- Engines: `bun >=1.0.0`
+- Engines: `bun >=1.3.8`
 
 ---
 
@@ -445,6 +487,63 @@ tsc --noEmit
 
 # Check specific file
 tsc --noEmit src/specific-file.ts
+```
+
+---
+
+## CI/CD Troubleshooting
+
+### Release Assets Not Created
+
+**Symptom**: GitHub release exists but has no binary assets.
+
+**Causes & Solutions**:
+1. **workflow_run not triggered**: Check if the `semantic-release.yml` workflow completed successfully.
+2. **Time gate exceeded**: If release creation takes >10 minutes, the build may be skipped. Re-run manually.
+3. **API rate limiting**: The `gh api` call may fail. Check workflow logs for retry attempts.
+
+**Manual Fix**:
+```bash
+# Re-trigger release workflow manually from GitHub Actions UI
+# Or push a new tag with PAT (Personal Access Token)
+git tag -a v0.x.x -m "Release v0.x.x"
+git push origin v0.x.x
+```
+
+### Failed Cross-Platform Builds
+
+**Symptom**: One or more platform builds fail in the matrix.
+
+**Solutions**:
+1. Check platform-specific issues in logs
+2. Verify `bun` supports the target platform
+3. Re-run failed jobs from GitHub Actions UI
+
+### Semantic Release Not Triggering
+
+**Symptom**: Pushing to `main` doesn't create a release.
+
+**Causes**:
+1. Commit messages don't follow Conventional Commits format
+2. No version bump required (only `chore`, `docs`, `style` commits)
+3. `GITHUB_TOKEN` lacks permissions
+
+**Verify**:
+```bash
+# Check semantic-release dry-run
+bunx semantic-release@latest --dry-run
+```
+
+### Workflow Permission Errors
+
+**Symptom**: `Error: Resource not accessible by integration`
+
+**Solution**: Ensure workflow has required permissions:
+```yaml
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
 ```
 
 ---
