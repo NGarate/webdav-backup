@@ -7,40 +7,57 @@
 
 import { parseArgs } from "node:util";
 import chalk from "chalk";
+import { z } from "zod";
 
 // Import the syncFiles function
-import { syncFiles, SyncOptions } from "./src/file-sync";
-import { BackupScheduler } from "./src/core/scheduler/scheduler";
-import { RestoreManager, RestoreOptions } from "./src/core/restore/restore-manager";
+import { syncFiles, SyncOptions } from "./src/file-sync.js";
+import { initBackupScheduler, startBackupDaemon, BackupConfig } from "./src/core/scheduler/scheduler.js";
+import { initRestoreManager, restoreFiles, RestoreOptions } from "./src/core/restore/restore-manager.js";
+import { formatError } from "./src/utils/error-handler.js";
 
-// Get version from package.json using Bun's built-in functionality
+// Get version from package.json
 const packageJson = await Bun.file("package.json").json();
 const VERSION = packageJson.version || "unknown";
+
+// Zod schemas for CLI validation
+const BackupSchema = z.object({
+  source: z.string().min(1, "Source directory is required"),
+  target: z.string().optional(),
+  cores: z.coerce.number().int().min(1).max(64).optional(),
+  schedule: z.string().optional(),
+  daemon: z.boolean().optional(),
+  force: z.boolean().optional(),
+  resume: z.boolean().optional(),
+  "chunk-size": z.coerce.number().int().min(1).max(1024).optional(),
+  quiet: z.boolean().optional(),
+  verbose: z.boolean().optional(),
+});
+
+const RestoreSchema = z.object({
+  remotePath: z.string().min(1, "Remote path is required"),
+  destination: z.string().optional(),
+  target: z.string().optional(),
+  cores: z.coerce.number().int().min(1).max(64).optional(),
+  force: z.boolean().optional(),
+  quiet: z.boolean().optional(),
+  verbose: z.boolean().optional(),
+});
 
 // Parse command line arguments
 function parse() {
   const { values, positionals } = parseArgs({
     args: Bun.argv.slice(2),
     options: {
-      // Core options
       "source": { type: "string" },
       "target": { type: "string" },
       "cores": { type: "string" },
-
-      // Scheduling
       "schedule": { type: "string" },
       "daemon": { type: "boolean" },
-
-      // Behavior
       "force": { type: "boolean" },
       "resume": { type: "boolean" },
       "chunk-size": { type: "string" },
-
-      // Output
       "quiet": { type: "boolean" },
       "verbose": { type: "boolean" },
-
-      // Help
       "help": { type: "boolean", short: "h" },
       "version": { type: "boolean", short: "v" }
     },
@@ -50,7 +67,8 @@ function parse() {
   return {
     ...values,
     command: positionals[0],
-    positionalPath: positionals[1]
+    positionalPath: positionals[1],
+    destination: positionals[2]
   };
 }
 
@@ -104,41 +122,60 @@ function showVersion() {
   console.log(`internxt-backup v${VERSION}`);
 }
 
+// Unified error handler
+const handleCliError = (error: unknown): never => {
+  const msg = formatError(error);
+  console.error(chalk.red(`Error: ${msg}`));
+  console.log();
+  showHelp();
+  process.exit(1);
+};
+
 // Handle backup command
 async function handleBackup(args: any) {
   const sourceDir = args.positionalPath || args.source;
   
   if (!sourceDir) {
-    console.error(chalk.red("Error: Source directory is required"));
-    console.log();
-    showHelp();
-    process.exit(1);
+    handleCliError(new Error("Source directory is required"));
   }
+
+  // Validate with Zod
+  const parsed = BackupSchema.safeParse({ ...args, source: sourceDir });
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n');
+    handleCliError(new Error(`Validation failed:\n${errorMessages}`));
+    return; // TypeScript guard
+  }
+
+  const validated = parsed.data;
 
   // Build sync options
   const syncOptions: SyncOptions = {
-    cores: args.cores ? parseInt(args.cores) : undefined,
-    target: args.target,
-    quiet: args.quiet,
-    verbose: args.verbose,
-    force: args.force,
-    resume: args.resume,
-    chunkSize: args["chunk-size"] ? parseInt(args["chunk-size"]) : undefined
+    cores: validated.cores,
+    target: validated.target,
+    quiet: validated.quiet,
+    verbose: validated.verbose,
+    force: validated.force,
+    resume: validated.resume,
+    chunkSize: validated["chunk-size"]
   };
 
   // Handle daemon mode with scheduling
-  if (args.daemon && args.schedule) {
-    console.log(chalk.blue(`Starting daemon mode with schedule: ${args.schedule}`));
-    const scheduler = new BackupScheduler();
-    await scheduler.startDaemon({
+  if (validated.daemon && validated.schedule) {
+    console.log(chalk.blue(`Starting daemon mode with schedule: ${validated.schedule}`));
+    
+    const config: BackupConfig = {
       sourceDir,
-      schedule: args.schedule,
+      schedule: validated.schedule,
       syncOptions
-    });
+    };
+    
+    // Initialize and start daemon (will block until shutdown)
+    await startBackupDaemon(config);
     return;
   }
 
-  // Run the main sync function with the parsed arguments
+  // Run the main sync function
   await syncFiles(sourceDir, syncOptions);
 }
 
@@ -147,29 +184,40 @@ async function handleRestore(args: any) {
   const remotePath = args.positionalPath;
   
   if (!remotePath) {
-    console.error(chalk.red("Error: Remote path is required"));
-    console.log();
-    showHelp();
-    process.exit(1);
+    handleCliError(new Error("Remote path is required"));
   }
 
+  // Validate with Zod
+  const parsed = RestoreSchema.safeParse({
+    ...args,
+    remotePath,
+    destination: args.destination
+  });
+  
+  if (!parsed.success) {
+    const errorMessages = parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`).join('\n');
+    handleCliError(new Error(`Validation failed:\n${errorMessages}`));
+    return; // TypeScript guard
+  }
+
+  const validated = parsed.data;
+
   // Determine local destination
-  // If a second positional argument is provided, use it as destination
-  // Otherwise use --target or current directory
-  const destination = args.destination || args.target || ".";
+  const destination = validated.destination || validated.target || ".";
 
   // Build restore options
   const restoreOptions: RestoreOptions = {
-    cores: args.cores ? parseInt(args.cores) : undefined,
-    force: args.force,
-    quiet: args.quiet,
-    verbose: args.verbose
+    cores: validated.cores,
+    force: validated.force,
+    quiet: validated.quiet,
+    verbose: validated.verbose
   };
 
-  console.log(chalk.blue(`Restoring from ${remotePath} to ${destination}...`));
+  console.log(chalk.blue(`Restoring from ${validated.remotePath} to ${destination}...`));
 
-  const restoreManager = new RestoreManager(remotePath, destination, restoreOptions);
-  const result = await restoreManager.restore();
+  // Initialize and restore
+  initRestoreManager(validated.remotePath, destination, restoreOptions);
+  const result = await restoreFiles();
 
   if (result.success) {
     console.log(chalk.green(`\nRestore completed successfully!`));
@@ -190,10 +238,9 @@ async function handleRestore(args: any) {
 // Main function
 async function main() {
   try {
-    // Check if help or version flags are present before parsing other arguments
     const rawArgs = Bun.argv.slice(2);
 
-    // Check for help flag first
+    // Check for help flag
     if (rawArgs.includes("--help") || rawArgs.includes("-h")) {
       showHelp();
       process.exit(0);
@@ -205,7 +252,7 @@ async function main() {
       process.exit(0);
     }
 
-    // Show help when no arguments are provided
+    // Show help when no arguments
     if (rawArgs.length === 0) {
       showHelp();
       process.exit(0);
@@ -225,33 +272,22 @@ async function main() {
         break;
       
       default:
-        // For backward compatibility, treat unknown command as backup with positional path
+        // For backward compatibility, treat unknown command as backup
         if (args.command && !args.command.startsWith("--")) {
           args.source = args.command;
           args.positionalPath = args.command;
           await handleBackup(args);
         } else {
-          console.error(chalk.red(`Error: Unknown command "${args.command}"`));
-          console.log();
-          showHelp();
-          process.exit(1);
+          handleCliError(new Error(`Unknown command "${args.command}"`));
         }
     }
 
-  } catch (error: any) {
-    console.error(chalk.red(`Error: ${error.message}`));
-    console.log();
-    showHelp();
-    process.exit(1);
+  } catch (error) {
+    handleCliError(error);
   }
 }
 
-// Run the main function
+// Run the main function with unified error handling
 if (import.meta.main) {
-  main().catch(err => {
-    console.error(chalk.red(`Error: ${err.message}`));
-    console.log();
-    showHelp();
-    process.exit(1);
-  });
+  main().catch(handleCliError);
 }
