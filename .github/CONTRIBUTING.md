@@ -13,17 +13,20 @@ Thank you for your interest in contributing! This document provides guidelines f
 ## Development Setup
 
 1. **Fork and clone the repository**
+
    ```bash
    git clone https://github.com/YOUR_USERNAME/internxt-backup.git
    cd internxt-backup
    ```
 
 2. **Install dependencies**
+
    ```bash
    bun install
    ```
 
 3. **Verify everything works**
+
    ```bash
    bun test
    bun run typecheck
@@ -36,7 +39,8 @@ This project follows [Conventional Commits](https://www.conventionalcommits.org/
 
 ### Format
 
-```
+```text
+
 <type>[optional scope]: <description>
 
 [optional body]
@@ -76,6 +80,7 @@ BREAKING CHANGE: The --webdav-url option has been removed. Use --target instead.
 ### Examples
 
 **Patch releases (1.0.0 → 1.0.1):**
+
 ```bash
 # Bug fix
 git commit -m "fix: resolve memory leak in file upload"
@@ -97,6 +102,7 @@ git commit -m "chore: update dependencies to latest patch versions"
 ```
 
 **Minor releases (1.0.0 → 1.1.0):**
+
 ```bash
 # New feature
 git commit -m "feat: add resume capability for interrupted uploads"
@@ -112,6 +118,7 @@ max retries and exponential backoff strategy."
 ```
 
 **Major releases (1.0.0 → 2.0.0):**
+
 ```bash
 # Breaking change with !
 git commit -m "feat!: remove support for legacy config format"
@@ -134,6 +141,7 @@ BREAKING CHANGE: Config file format changed from JSON to YAML."
 ## Pull Request Process
 
 1. **Create a feature branch**
+
    ```bash
    git checkout -b feat/your-feature-name
    # or
@@ -146,6 +154,7 @@ BREAKING CHANGE: Config file format changed from JSON to YAML."
    - Update documentation if needed
 
 3. **Ensure quality checks pass**
+
    ```bash
    bun test
    bun run typecheck
@@ -153,6 +162,7 @@ BREAKING CHANGE: Config file format changed from JSON to YAML."
    ```
 
 4. **Push and create a Pull Request**
+
    ```bash
    git push origin feat/your-feature-name
    ```
@@ -213,6 +223,7 @@ bun test --watch
 Tests are located alongside source files or in `index.test.ts` for CLI tests.
 
 Example test:
+
 ```typescript
 import { expect, describe, it } from 'bun:test';
 import { parseArgs } from 'node:util';
@@ -229,6 +240,7 @@ describe('CLI', () => {
 ## Questions?
 
 If you have questions about contributing, feel free to:
+
 - Open an issue for discussion
 - Check existing issues and PRs for examples
 
