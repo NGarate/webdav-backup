@@ -235,6 +235,10 @@ jobs:
           VERSION=${VERSION#v}  # Remove 'v' prefix to match changelog format (e.g., v1.0.0 -> 1.0.0)
           # Extract changelog entry for this version
           CHANGELOG=$(sed -n "/^## \[$VERSION\]/,/^## \[/p" CHANGELOG.md | head -n -1)
+          if [[ -z "$CHANGELOG" ]]; then
+            echo "Warning: No changelog entry found for version $VERSION"
+            CHANGELOG="No changelog entry found for this version."
+          fi
           echo "CHANGELOG<<EOF" >> $GITHUB_OUTPUT
           echo "$CHANGELOG" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
