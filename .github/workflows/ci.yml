@@ -180,6 +180,12 @@ jobs:
         run: |
           set -euo pipefail
           
+          # Skip execution test for cross-compiled ARM64 binaries
+          if [[ "${{ matrix.target }}" == *"arm64"* ]] && [[ "$(uname -m)" != "arm64" ]] && [[ "$(uname -m)" != "aarch64" ]]; then
+            echo "Skipping execution test for cross-compiled ARM64 binary"
+            exit 0
+          fi
+          
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             # Test Windows executable - these should succeed
             ./dist/${{ matrix.artifact }} --version
