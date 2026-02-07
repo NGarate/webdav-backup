@@ -133,7 +133,7 @@ This project uses **GitHub Actions** for continuous integration and deployment w
 
 ### Workflow Overview
 
-```
+```text
 main branch (protected)
     │
     ├── Pull Request → CI checks (lint, test, typecheck, security) → Merge
